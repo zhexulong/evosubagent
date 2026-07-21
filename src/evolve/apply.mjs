@@ -40,6 +40,7 @@ export async function loadVersionState(projectRoot, subagentName) {
   } catch (error) {
     if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') {
       return {
+        schemaVersion: 1,
         subagentName,
         version: '1',
         appliedPatches: [],
@@ -57,7 +58,12 @@ export async function saveVersionState(projectRoot, state) {
   const name = requireString(state.subagentName, 'state.subagentName');
   const path = versionStatePath(projectRoot, name);
   await mkdir(resolveProjectPaths(projectRoot).versionsPath, { recursive: true });
-  await writeJsonAtomic(path, state);
+  const withSchema = {
+    ...state,
+    subagentName: name,
+    schemaVersion: 1,
+  };
+  await writeJsonAtomic(path, withSchema);
   return path;
 }
 
@@ -125,6 +131,7 @@ export async function applyEvolutionPatch({ projectRoot, patch, actorRef }) {
     ...appliedPatch,
     previousVersionState: previous,
     nextVersionState: next,
+    schemaVersion: 1,
   });
   const versionRef = await saveVersionState(projectRoot, next);
 

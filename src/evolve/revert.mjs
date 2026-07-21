@@ -66,6 +66,7 @@ export async function revertEvolutionPatch({ projectRoot, subagentName, patchId,
     ...revertedPatch,
     previousVersionState,
     restoredVersionState: previousVersionState,
+    schemaVersion: 1,
   });
 
   const restoredVersionState = await loadVersionState(projectRoot, name);
