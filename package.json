@@ -12,7 +12,8 @@
     "demo:correct-once": "node ./src/cli/main.mjs demo correct-once --project ./fixtures/demo-correct-once/project",
     "evosubagent": "node ./src/cli/main.mjs",
     "eval:mini": "node eval/runners/mini-bench.mjs",
-    "eval:summarize": "node eval/runners/summarize.mjs"
+    "eval:summarize": "node eval/runners/summarize.mjs",
+    "live:smoke": "node ./scripts/live-smoke.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -23,5 +24,10 @@
     "evosubagent",
     "self-improve"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "evosubagent": {
+    "piPackage": "@earendil-works/pi-coding-agent",
+    "piVersionPin": "0.80.10",
+    "defaultLiveModel": "cpa-oai/grok-4.5"
+  }
 }
