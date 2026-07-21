@@ -17,3 +17,8 @@ worktrees/
 
 # Local indexing
 .codegraph/
+
+# Eval caches (TB download)
+eval/cache/
+eval/jobs/
+jobs/
