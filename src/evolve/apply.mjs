@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { requireString } from '../define/schema.mjs';
 import { resolveProjectPaths } from '../ledger/paths.mjs';
+import { writeJsonAtomic } from './atomic-write.mjs';
 import { transitionPatchStatus, validateEvolutionPatch } from './patch.mjs';
 
 function clone(value) {
@@ -39,6 +40,7 @@ export async function loadVersionState(projectRoot, subagentName) {
   } catch (error) {
     if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') {
       return {
+        schemaVersion: 1,
         subagentName,
         version: '1',
         appliedPatches: [],
@@ -56,8 +58,26 @@ export async function saveVersionState(projectRoot, state) {
   const name = requireString(state.subagentName, 'state.subagentName');
   const path = versionStatePath(projectRoot, name);
   await mkdir(resolveProjectPaths(projectRoot).versionsPath, { recursive: true });
-  await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  const withSchema = {
+    ...state,
+    subagentName: name,
+    schemaVersion: 1,
+  };
+  await writeJsonAtomic(path, withSchema);
   return path;
+}
+
+/**
+ * Reject empty correction / identical afterText before any version bump.
+ * @param {ReturnType<typeof validateEvolutionPatch>} patch
+ */
+export function assertPatchEligibleForApply(patch) {
+  if (!patch.correction || patch.correction.trim().length === 0) {
+    throw new Error('reject empty correction: no version bump');
+  }
+  if (patch.afterText === patch.beforeText) {
+    throw new Error('reject identical afterText: no-op with no version bump');
+  }
 }
 
 /**
@@ -70,6 +90,7 @@ export async function saveVersionState(projectRoot, state) {
  */
 export async function applyEvolutionPatch({ projectRoot, patch, actorRef }) {
   const accepted = validateEvolutionPatch(patch);
+  assertPatchEligibleForApply(accepted);
   if (accepted.status !== 'accepted' && accepted.status !== 'proposed') {
     throw new Error(`apply requires proposed or accepted patch, got ${accepted.status}`);
   }
@@ -106,11 +127,12 @@ export async function applyEvolutionPatch({ projectRoot, patch, actorRef }) {
   const paths = resolveProjectPaths(projectRoot);
   await mkdir(paths.patchesPath, { recursive: true });
   const patchRef = join(paths.patchesPath, `${toApply.patchId}.json`);
-  await writeFile(
-    patchRef,
-    `${JSON.stringify({ ...appliedPatch, previousVersionState: previous, nextVersionState: next }, null, 2)}\n`,
-    'utf8',
-  );
+  await writeJsonAtomic(patchRef, {
+    ...appliedPatch,
+    previousVersionState: previous,
+    nextVersionState: next,
+    schemaVersion: 1,
+  });
   const versionRef = await saveVersionState(projectRoot, next);
 
   return {
