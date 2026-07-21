@@ -63,20 +63,34 @@ class PiB0Cold(BaseInstalledAgent):
 
     @override
     async def install(self, environment: BaseEnvironment) -> None:
+        need_pi = True
+        try:
+            await self.exec_as_agent(
+                environment,
+                command=(
+                    "bash -lc '. ~/.nvm/nvm.sh 2>/dev/null || true; "
+                    "command -v pi >/dev/null && pi --version'"
+                ),
+            )
+            need_pi = False
+        except Exception:
+            need_pi = True
+
         await self.exec_as_root(
             environment,
             command="apt-get update && apt-get install -y curl git ca-certificates tar",
             env={"DEBIAN_FRONTEND": "noninteractive"},
         )
-        await self.exec_as_agent(
-            environment,
-            command=(
-                "set -euo pipefail; "
-                f"{nvm_node_install_snippet()} && "
-                f"npm install -g {PI_PACKAGE} && "
-                "pi --version"
-            ),
-        )
+        if need_pi:
+            await self.exec_as_agent(
+                environment,
+                command=(
+                    "set -euo pipefail; "
+                    f"{nvm_node_install_snippet()} && "
+                    f"npm install -g {PI_PACKAGE} && "
+                    "pi --version"
+                ),
+            )
 
         # Upload real package source
         tgz = make_src_tarball()

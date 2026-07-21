@@ -48,6 +48,17 @@ class PiA0(BaseInstalledAgent):
 
     @override
     async def install(self, environment: BaseEnvironment) -> None:
+        try:
+            await self.exec_as_agent(
+                environment,
+                command=(
+                    "bash -lc '. ~/.nvm/nvm.sh 2>/dev/null || true; "
+                    "command -v pi >/dev/null && pi --version'"
+                ),
+            )
+            return
+        except Exception:
+            pass
         await self.exec_as_root(
             environment,
             command="apt-get update && apt-get install -y curl git ca-certificates",

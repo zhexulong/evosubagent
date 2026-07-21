@@ -96,3 +96,12 @@ B0_cold must **not** only prepend prose about subagents. It:
 5. Runs Pi with that prompt
 
 Proof artifacts under `/logs/agent/`: `materialize.json`, `materialized-prompt.txt`.
+
+### Local fix-git dual-arm (when Harbor chown hangs)
+
+```bash
+# needs baked image + host proxy 7897 + gateway 8317
+npm run eval:fix-git-dual
+```
+
+B0_cold path still uses real `materializeSubagentContext` + `buildPiChildPrompt`.
