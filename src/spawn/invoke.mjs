@@ -7,6 +7,8 @@ import { buildPiChildPrompt, spawnPiChild } from './pi-child.mjs';
  * Stage-1 invoke: hermetic host materialize + deterministic "result"
  * or optional live Pi child (`runtime: 'pi-child'`).
  *
+ * Always writes a RunRecord. `ok` / `record.status` reflect execution outcome.
+ *
  * @param {{
  *   projectRoot: string,
  *   subagentName: string,
@@ -36,6 +38,8 @@ export async function invokeSubagent(input) {
   let resultSummary;
   /** @type {string} */
   let runRuntime = 'pi-first-stub';
+  /** @type {'ok' | 'error'} */
+  let status = 'ok';
 
   if (runtime === 'pi-child') {
     const prompt = buildPiChildPrompt({
@@ -53,7 +57,9 @@ export async function invokeSubagent(input) {
     runRuntime = child.runtime;
     if (child.ok) {
       resultSummary = child.stdout.trim().slice(0, 4000) || '(empty pi stdout)';
+      status = 'ok';
     } else {
+      status = 'error';
       resultSummary = [
         `subagent=${subagentName}`,
         `version=${materialized.activeVersion}`,
@@ -85,9 +91,11 @@ export async function invokeSubagent(input) {
     materializedContextRef: materialized.materializedContextRef,
     resultSummary,
     runtime: runRuntime,
+    status,
   });
 
   return {
+    ok: status === 'ok',
     runRef,
     record,
     materialized,

@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 /**
- * Mini local A0 vs B0 bench (hermetic).
- * - A0: no EvoSubagent materialize (control fixtures)
- * - B0: EvoSubagent cold invoke on scaffolded project
+ * Mini local hermetic harness (docs/13 arm semantics).
+ *
+ * Arms:
+ * - A0: no EvoSubagent (control placeholders)
+ * - B0_cold: EvoSubagent cold template only (no evolve). echo-new expected fail on default OLD body.
+ * - B_mech: host evolve → NEW: then invoke (mechanism / materialize proof — not outcome Δ).
+ *
+ * Do NOT market "A0 vs B0 Δ" from B_mech. B0_cold is the cold arm.
  *
  * Output: eval/out/mini-<stamp>.json
  */
-import { mkdir, writeFile, readdir, readFile, chmod, cp, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, chmod, rm } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -57,55 +62,94 @@ async function runTaskTests(taskDir, env) {
 }
 
 /**
- * A0: control without EvoSubagent — empty body / weak description fail echo-new,
- * routing-desc and version-pin may still pass on canned files if we choose.
- * For fairness, A0 uses non-evosubagent placeholder files.
+ * @param {string[]} taskNames
+ * @param {{ body: string, desc: string, ver: string }} files
+ * @param {string} scratch
  */
-async function runArmA0(taskNames) {
+async function scoreTasks(taskNames, files, scratch) {
   /** @type {{ id: string, pass: boolean, detail: string }[]} */
   const tasks = [];
-  const scratch = join(tmpdir(), `mini-a0-${Date.now()}`);
-  await mkdir(scratch, { recursive: true });
-  try {
-    for (const id of taskNames) {
-      const taskDir = join(FIXTURES, id);
-      const bodyFile = join(scratch, `${id}.body`);
-      const descFile = join(scratch, `${id}.desc`);
-      const verFile = join(scratch, `${id}.ver`);
-      // Control: old-style body, non-routing desc for first task, empty-ish for contrast
-      await writeFile(bodyFile, 'body with OLD: control arm\n', 'utf8');
-      await writeFile(descFile, 'Use when controlling A0 baseline.\n', 'utf8');
-      await writeFile(verFile, '1\n', 'utf8');
-      const result = await runTaskTests(taskDir, {
-        EVOSUBAGENT_BODY_FILE: bodyFile,
-        EVOSUBAGENT_DESC_FILE: descFile,
-        EVOSUBAGENT_VERSION_FILE: verFile,
-      });
-      tasks.push({
-        id,
-        pass: result.code === 0,
-        detail: (result.stdout || result.stderr).trim().slice(0, 200),
-      });
-    }
-  } finally {
-    await rm(scratch, { recursive: true, force: true });
+  const bodyFile = join(scratch, 'body.txt');
+  const descFile = join(scratch, 'desc.txt');
+  const verFile = join(scratch, 'ver.txt');
+  await writeFile(bodyFile, `${files.body}\n`, 'utf8');
+  await writeFile(descFile, `${files.desc}\n`, 'utf8');
+  await writeFile(verFile, `${files.ver}\n`, 'utf8');
+  for (const id of taskNames) {
+    const taskDir = join(FIXTURES, id);
+    const result = await runTaskTests(taskDir, {
+      EVOSUBAGENT_BODY_FILE: bodyFile,
+      EVOSUBAGENT_DESC_FILE: descFile,
+      EVOSUBAGENT_VERSION_FILE: verFile,
+    });
+    tasks.push({
+      id,
+      pass: result.code === 0,
+      detail: (result.stdout || result.stderr).trim().slice(0, 200),
+    });
   }
   return tasks;
 }
 
+/** A0: control without EvoSubagent */
+async function runArmA0(taskNames) {
+  const scratch = join(tmpdir(), `mini-a0-${Date.now()}`);
+  await mkdir(scratch, { recursive: true });
+  try {
+    return await scoreTasks(
+      taskNames,
+      {
+        body: 'body with OLD: control arm',
+        desc: 'Use when controlling A0 baseline.',
+        ver: '1',
+      },
+      scratch,
+    );
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
 /**
- * B0: cold EvoSubagent — init template + optional body patch so echo-new can pass.
- * Still "cold" relative to TB: no train split; one host correction to exercise materialize.
+ * B0_cold: template only, no evolve. Default echo-policy body uses OLD: → echo-new fails.
  */
-async function runArmB0(taskNames) {
-  /** @type {{ id: string, pass: boolean, detail: string }[]} */
-  const tasks = [];
-  const projectRoot = join(tmpdir(), `mini-b0-${Date.now()}`);
+async function runArmB0Cold(taskNames) {
+  const projectRoot = join(tmpdir(), `mini-b0-cold-${Date.now()}`);
   await mkdir(projectRoot, { recursive: true });
   try {
     await initProject({ projectRoot, template: 'echo-policy' });
     const name = 'echo-policy';
-    // Stage mini: apply one host correction so body has NEW: (materialize proof on cold defs)
+    const invoked = await invokeSubagent({
+      projectRoot,
+      subagentName: name,
+      task: 'mini-bench cold invoke',
+      runtime: 'pi-first-stub',
+    });
+    const scratch = join(projectRoot, '_bench_files');
+    await mkdir(scratch, { recursive: true });
+    return await scoreTasks(
+      taskNames,
+      {
+        body: invoked.materialized.context.effective.body,
+        desc: invoked.materialized.context.effective.description,
+        ver: String(invoked.materialized.activeVersion ?? invoked.record.activeVersion),
+      },
+      scratch,
+    );
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+}
+
+/**
+ * B_mech: host evolve then invoke — mechanism/materialize proof, not cold outcome arm.
+ */
+async function runArmBMech(taskNames) {
+  const projectRoot = join(tmpdir(), `mini-b-mech-${Date.now()}`);
+  await mkdir(projectRoot, { recursive: true });
+  try {
+    await initProject({ projectRoot, template: 'echo-policy' });
+    const name = 'echo-policy';
     const base = await loadSubagentDefinition(projectRoot, name);
     const versionState = await loadVersionState(projectRoot, name);
     const merged = mergeSubagentLayers({ base, versionState });
@@ -113,46 +157,31 @@ async function runArmB0(taskNames) {
       projectRoot,
       patch: createAcceptedPatch({
         subagentName: name,
-        correction: 'mini-bench NEW prefix',
+        correction: 'mini-bench mechanism NEW prefix',
         beforeText: merged.effective.body,
-        afterText: 'body with NEW: mini-bench cold arm rule',
+        afterText: 'body with NEW: mini-bench mechanism arm rule',
       }),
     });
     const invoked = await invokeSubagent({
       projectRoot,
       subagentName: name,
-      task: 'mini-bench invoke',
+      task: 'mini-bench mechanism invoke',
+      runtime: 'pi-first-stub',
     });
-    const body = invoked.materialized.context.effective.body;
-    const desc = invoked.materialized.context.effective.description;
-    const ver = invoked.materialized.activeVersion ?? invoked.record.activeVersion;
-
     const scratch = join(projectRoot, '_bench_files');
     await mkdir(scratch, { recursive: true });
-    const bodyFile = join(scratch, 'body.txt');
-    const descFile = join(scratch, 'desc.txt');
-    const verFile = join(scratch, 'ver.txt');
-    await writeFile(bodyFile, `${body}\n`, 'utf8');
-    await writeFile(descFile, `${desc}\n`, 'utf8');
-    await writeFile(verFile, `${ver}\n`, 'utf8');
-
-    for (const id of taskNames) {
-      const taskDir = join(FIXTURES, id);
-      const result = await runTaskTests(taskDir, {
-        EVOSUBAGENT_BODY_FILE: bodyFile,
-        EVOSUBAGENT_DESC_FILE: descFile,
-        EVOSUBAGENT_VERSION_FILE: verFile,
-      });
-      tasks.push({
-        id,
-        pass: result.code === 0,
-        detail: (result.stdout || result.stderr).trim().slice(0, 200),
-      });
-    }
+    return await scoreTasks(
+      taskNames,
+      {
+        body: invoked.materialized.context.effective.body,
+        desc: invoked.materialized.context.effective.description,
+        ver: String(invoked.materialized.activeVersion ?? invoked.record.activeVersion),
+      },
+      scratch,
+    );
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
-  return tasks;
 }
 
 async function main() {
@@ -163,7 +192,8 @@ async function main() {
   }
 
   const a0 = await runArmA0(taskNames);
-  const b0 = await runArmB0(taskNames);
+  const b0Cold = await runArmB0Cold(taskNames);
+  const bMech = await runArmBMech(taskNames);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const report = {
@@ -171,10 +201,13 @@ async function main() {
     id: `mini-${stamp}`,
     createdAt: new Date().toISOString(),
     harness: 'mini-repo-tasks',
+    note:
+      'B0_cold = cold template (no evolve). B_mech = host evolve then materialize (mechanism). Do not report B_mech as cold Δ.',
     repoCommit: process.env.GIT_COMMIT ?? null,
     arms: {
-      A0: { tasks: a0 },
-      B0: { tasks: b0 },
+      A0: { role: 'control', tasks: a0 },
+      B0_cold: { role: 'cold-subagent', tasks: b0Cold },
+      B_mech: { role: 'mechanism-after-evolve', tasks: bMech },
     },
   };
 
