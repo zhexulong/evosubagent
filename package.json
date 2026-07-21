@@ -1,0 +1,25 @@
+{
+  "name": "evosubagent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Pi-first customizable subagents with a minimal self-improve loop",
+  "bin": {
+    "evosubagent": "./src/cli/main.mjs"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "demo:correct-once": "node ./src/cli/main.mjs demo correct-once --project ./fixtures/demo-correct-once/project",
+    "evosubagent": "node ./src/cli/main.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "pi",
+    "subagent",
+    "evosubagent",
+    "self-improve"
+  ],
+  "license": "MIT"
+}

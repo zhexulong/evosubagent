@@ -1,0 +1,19 @@
+node_modules/
+.evosubagent/runs/
+.evosubagent/evolution/
+.evosubagent/materialized/
+fixtures/**/.work-*/
+fixtures/**/.test-*/
+*.log
+.DS_Store
+
+# Design docs stay local (not published in repo)
+docs/
+
+# SDD / worktree scratch
+.superpowers/
+.worktrees/
+worktrees/
+
+# Local indexing
+.codegraph/
