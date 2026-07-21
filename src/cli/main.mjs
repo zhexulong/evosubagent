@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { resolve } from 'node:path';
 import { invokeSubagent } from '../spawn/invoke.mjs';
-import { applyEvolutionPatch } from '../evolve/apply.mjs';
+import { applyEvolutionPatch, loadVersionState } from '../evolve/apply.mjs';
 import { createAcceptedPatch } from '../evolve/patch.mjs';
+import { revertEvolutionPatch } from '../evolve/revert.mjs';
 import { loadSubagentDefinition } from '../define/load.mjs';
-import { loadVersionState } from '../evolve/apply.mjs';
 import { mergeSubagentLayers } from '../layers/merge.mjs';
 import { runCorrectOnceDemo } from './demo-correct-once.mjs';
 
@@ -14,7 +14,8 @@ function printHelp() {
 Usage:
   evosubagent init --project <path>
   evosubagent invoke --project <path> --name <subagent> --task <text>
-  evosubagent evolve --project <path> --name <subagent> --correction <text> --after-body <text>
+  evosubagent evolve --project <path> --name <subagent> --correction <text> --after-body <text> [--from-run <runId>]
+  evosubagent revert --project <path> --name <subagent> --patch-id <id>
   evosubagent doctor --project <path> --name <subagent>
   evosubagent demo correct-once --project <path>
   evosubagent --help
@@ -57,19 +58,25 @@ async function cmdEvolve(args) {
   const name = String(args.name ?? '');
   const correction = String(args.correction ?? '');
   const afterBody = String(args['after-body'] ?? args.afterBody ?? '');
+  const fromRun = args['from-run'] ?? args.fromRun;
   if (!name || !correction || !afterBody) {
     throw new Error('evolve requires --name, --correction, --after-body');
   }
   const base = await loadSubagentDefinition(projectRoot, name);
   const versionState = await loadVersionState(projectRoot, name);
   const merged = mergeSubagentLayers({ base, versionState });
+  /** @type {string[]} */
+  const sourceRefs = ['cli:evolve'];
+  if (fromRun && fromRun !== true) {
+    sourceRefs.push(String(fromRun));
+  }
   const patch = createAcceptedPatch({
     subagentName: name,
     targetKind: 'subagent-body',
     correction,
     beforeText: merged.effective.body,
     afterText: afterBody,
-    sourceRefs: ['cli:evolve'],
+    sourceRefs,
   });
   const applied = await applyEvolutionPatch({ projectRoot, patch, actorRef: 'cli' });
   console.log(
@@ -80,6 +87,35 @@ async function cmdEvolve(args) {
         versionRef: applied.versionRef,
         previousVersion: applied.previousVersionState.version,
         nextVersion: applied.nextVersionState.version,
+        sourceRefs: applied.appliedPatch.sourceRefs,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function cmdRevert(args) {
+  const projectRoot = resolve(String(args.project ?? '.'));
+  const name = String(args.name ?? '');
+  const patchId = String(args['patch-id'] ?? args.patchId ?? '');
+  if (!name || !patchId) {
+    throw new Error('revert requires --name, --patch-id');
+  }
+  const result = await revertEvolutionPatch({
+    projectRoot,
+    subagentName: name,
+    patchId,
+    actorRef: 'cli',
+  });
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        patchRef: result.patchRef,
+        versionRef: result.versionRef,
+        restoredVersion: result.restoredVersionState.version,
+        patchStatus: result.appliedPatch.status,
       },
       null,
       2,
@@ -121,6 +157,7 @@ async function main() {
   try {
     if (cmd === 'invoke') await cmdInvoke(args);
     else if (cmd === 'evolve') await cmdEvolve(args);
+    else if (cmd === 'revert') await cmdRevert(args);
     else if (cmd === 'doctor') await cmdDoctor(args);
     else if (cmd === 'demo' && sub === 'correct-once') {
       const projectRoot = resolve(String(args.project ?? './fixtures/demo-correct-once/project'));
