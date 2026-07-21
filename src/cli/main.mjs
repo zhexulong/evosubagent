@@ -7,12 +7,13 @@ import { revertEvolutionPatch } from '../evolve/revert.mjs';
 import { loadSubagentDefinition } from '../define/load.mjs';
 import { mergeSubagentLayers } from '../layers/merge.mjs';
 import { runCorrectOnceDemo } from './demo-correct-once.mjs';
+import { initProject } from './init.mjs';
 
 function printHelp() {
   console.log(`evosubagent — Pi-first customizable subagents with min self-improve loop
 
 Usage:
-  evosubagent init --project <path>
+  evosubagent init --project <path> [--template echo-policy|worker]
   evosubagent invoke --project <path> --name <subagent> --task <text>
   evosubagent evolve --project <path> --name <subagent> --correction <text> --after-body <text> [--from-run <runId>]
   evosubagent revert --project <path> --name <subagent> --patch-id <id>
@@ -165,17 +166,11 @@ async function main() {
       console.log(JSON.stringify(report, null, 2));
       process.exit(report.pass ? 0 : 1);
     } else if (cmd === 'init') {
-      console.log(
-        JSON.stringify(
-          {
-            ok: true,
-            note: 'Create .evosubagent/subagents/<name>/SUBAGENT.md (see fixtures/demo-correct-once)',
-            project: resolve(String(args.project ?? '.')),
-          },
-          null,
-          2,
-        ),
-      );
+      const result = await initProject({
+        projectRoot: resolve(String(args.project ?? '.')),
+        template: args.template,
+      });
+      console.log(JSON.stringify(result, null, 2));
     } else {
       printHelp();
       process.exit(1);
