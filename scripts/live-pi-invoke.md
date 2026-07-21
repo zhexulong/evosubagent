@@ -2,6 +2,8 @@
 
 CI never requires this. Use when you have a model key and `pi` on PATH.
 
+**Verified pin:** `@earendil-works/pi-coding-agent@0.80.10`, model `cpa-oai/grok-4.5`. Prefer `npm run live:smoke`.
+
 ## Preconditions
 
 ```bash

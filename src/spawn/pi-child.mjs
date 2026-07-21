@@ -33,6 +33,75 @@ export function buildPiChildPrompt(input) {
 }
 
 /**
+ * Resolve CLI args for live Pi child.
+ * Defaults aligned with docs/15–16: cpa-oai / grok-4.5.
+ * @returns {{ args: string[], env: NodeJS.ProcessEnv, modelRef: string }}
+ */
+export function buildPiChildArgs() {
+  const provider = process.env.EVOSUBAGENT_PI_PROVIDER || process.env.PI_PROVIDER || 'cpa-oai';
+  const model = process.env.EVOSUBAGENT_MODEL || process.env.EVOSUBAGENT_PI_MODEL || 'grok-4.5';
+  const apiKey =
+    process.env.EVOSUBAGENT_PI_API_KEY ||
+    process.env.CPA_OAI_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    '';
+
+  /** @type {string[]} */
+  const args = [
+    '-p',
+    '--provider',
+    provider,
+    '--model',
+    model,
+    '--mode',
+    'text',
+    '--no-session',
+    '--no-tools',
+  ];
+  if (apiKey) {
+    args.push('--api-key', apiKey);
+  }
+
+  return {
+    args,
+    env: { ...process.env },
+    modelRef: `${provider}/${model}`,
+  };
+}
+
+/**
+ * Pi often exits 0 even on auth/model errors — detect from output.
+ * @param {{ stdout: string, stderr: string, exitCode: number | null }} r
+ */
+export function interpretPiChildResult(r) {
+  const combined = `${r.stdout}\n${r.stderr}`;
+  const failPatterns = [
+    /No API key found/i,
+    /Invalid API key/i,
+    /authentication_error/i,
+    /invalid x-api-key/i,
+    /Missing API key/i,
+    /"stopReason":"error"/,
+    /errorMessage":"/,
+  ];
+  for (const re of failPatterns) {
+    if (re.test(combined)) {
+      return {
+        ok: false,
+        error: `pi reported auth/model error (matched ${re})`,
+      };
+    }
+  }
+  if (r.exitCode !== 0 && r.exitCode !== null) {
+    return { ok: false, error: `pi exited ${r.exitCode}` };
+  }
+  if (!r.stdout.trim()) {
+    return { ok: false, error: 'pi produced empty stdout' };
+  }
+  return { ok: true };
+}
+
+/**
  * Spawn child `pi -p` with materialize prompt on stdin (avoids ARG_MAX).
  * Gated: requires `pi` on PATH and EVOSUBAGENT_LIVE=1 (or force:true).
  *
@@ -43,7 +112,7 @@ export function buildPiChildPrompt(input) {
  *   timeoutMs?: number,
  *   force?: boolean,
  * }} input
- * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, exitCode: number | null, runtime: string, error?: string }>}
+ * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, exitCode: number | null, runtime: string, modelRef?: string, error?: string }>}
  */
 export async function spawnPiChild(input) {
   const projectRoot = requireString(input.projectRoot, 'projectRoot');
@@ -64,20 +133,19 @@ export async function spawnPiChild(input) {
   }
 
   const piBin = input.piBin ?? process.env.EVOSUBAGENT_PI_BIN ?? 'pi';
-  const timeoutMs = input.timeoutMs ?? Number(process.env.EVOSUBAGENT_PI_TIMEOUT_MS ?? 120_000);
+  const timeoutMs = input.timeoutMs ?? Number(process.env.EVOSUBAGENT_PI_TIMEOUT_MS ?? 180_000);
+  const { args, env, modelRef } = buildPiChildArgs();
 
-  /** @type {string | null} */
-  let work = null;
   if (process.env.EVOSUBAGENT_PI_KEEP_PROMPT === '1') {
-    work = join(tmpdir(), `evosubagent-pi-${process.pid}-${Date.now()}`);
+    const work = join(tmpdir(), `evosubagent-pi-${process.pid}-${Date.now()}`);
     await mkdir(work, { recursive: true });
     await writeFile(join(work, 'prompt.txt'), prompt, 'utf8');
   }
 
   return new Promise((resolvePromise) => {
-    const child = spawn(piBin, ['-p'], {
+    const child = spawn(piBin, args, {
       cwd: projectRoot,
-      env: { ...process.env },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -92,6 +160,7 @@ export async function spawnPiChild(input) {
      *   stderr: string,
      *   exitCode: number | null,
      *   runtime: string,
+     *   modelRef?: string,
      *   error?: string,
      * }} result
      */
@@ -110,6 +179,7 @@ export async function spawnPiChild(input) {
         stderr: `${stderr}\n[timeout after ${timeoutMs}ms]`.trim(),
         exitCode: null,
         runtime: 'pi-child',
+        modelRef,
         error: `pi child timeout after ${timeoutMs}ms`,
       });
     }, timeoutMs);
@@ -127,17 +197,21 @@ export async function spawnPiChild(input) {
         stderr,
         exitCode: null,
         runtime: 'pi-child',
+        modelRef,
         error: String(err.message ?? err),
       });
     });
     child.on('close', (code) => {
+      const base = { stdout, stderr, exitCode: code };
+      const interpreted = interpretPiChildResult(base);
       finish({
-        ok: code === 0,
+        ok: interpreted.ok,
         stdout,
         stderr,
         exitCode: code,
         runtime: 'pi-child',
-        error: code === 0 ? undefined : `pi exited ${code}`,
+        modelRef,
+        error: interpreted.ok ? undefined : interpreted.error,
       });
     });
 
