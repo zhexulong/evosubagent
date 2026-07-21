@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "tb-subset-v0",
+  "description": "Placeholder Terminal-Bench task id list (freeze real ids when running Harbor).",
+  "bench": "terminal-bench",
+  "benchVersion": "TBD",
+  "taskIds": [
+    "placeholder-task-01",
+    "placeholder-task-02",
+    "placeholder-task-03"
+  ]
+}
