@@ -1,12 +1,59 @@
 {
   "schemaVersion": 1,
   "name": "tb-subset-v0",
-  "description": "Placeholder Terminal-Bench task id list (freeze real ids when running Harbor).",
+  "description": "Frozen Terminal-Bench 2.0 subset for L2a A0 vs B0_cold (docs/13, docs/15). Prefer easy/medium, multi-category; exclude heavy video/model-training for first freeze.",
   "bench": "terminal-bench",
-  "benchVersion": "TBD",
+  "benchVersion": "2.0",
+  "dataset": "terminal-bench@2.0",
+  "taskListHash": "87030810172cd45c",
+  "taskCount": 16,
   "taskIds": [
-    "placeholder-task-01",
-    "placeholder-task-02",
-    "placeholder-task-03"
-  ]
+    "fix-git",
+    "prove-plus-comm",
+    "overfull-hbox",
+    "caffe-cifar-10",
+    "crack-7z-hash",
+    "mteb-leaderboard",
+    "raman-fitting",
+    "constraints-scheduling",
+    "mteb-retrieve",
+    "break-filter-js-from-html",
+    "merge-diff-arc-agi-task",
+    "nginx-request-logging",
+    "dna-insert",
+    "extract-elf",
+    "financial-document-processor",
+    "multi-source-data-merger"
+  ],
+  "selectionNotes": [
+    "Source: harbor dataset download terminal-bench@2.0 (89 tasks)",
+    "Selection: up to 2 per category, prefer easy then medium, cap 16",
+    "Recompute hash: sha256(ids joined by newline).slice(0,16)"
+  ],
+  "model": {
+    "ref": "cpa-oai/grok-4.5",
+    "provider": "cpa-oai",
+    "modelId": "grok-4.5",
+    "gatewayHostDefault": "http://host.docker.internal:8317/v1",
+    "notes": "Same as L1 smoke / OpenCode agent.general"
+  },
+  "arms": {
+    "A0": {
+      "role": "control",
+      "agent": "eval.harbor_agents.pi_a0:PiA0",
+      "description": "Bare Pi (earendil pin) inside Harbor container; no EvoSubagent"
+    },
+    "B0_cold": {
+      "role": "cold-subagent",
+      "agent": "eval.harbor_agents.pi_b0_cold:PiB0Cold",
+      "description": "Pi + EvoSubagent init templates (worker/explore/reviewer); evolve disabled"
+    }
+  },
+  "harbor": {
+    "package": "harbor (uv tool)",
+    "piPackage": "@earendil-works/pi-coding-agent",
+    "piVersionPin": "0.80.10",
+    "nConcurrentDefault": 1,
+    "datasetLocalCache": "eval/cache/terminal-bench-2.0"
+  }
 }

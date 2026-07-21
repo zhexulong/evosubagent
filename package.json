@@ -13,7 +13,10 @@
     "evosubagent": "node ./src/cli/main.mjs",
     "eval:mini": "node eval/runners/mini-bench.mjs",
     "eval:summarize": "node eval/runners/summarize.mjs",
-    "live:smoke": "node ./scripts/live-smoke.mjs"
+    "live:smoke": "node ./scripts/live-smoke.mjs",
+    "eval:tb-dry": "node eval/runners/tb-subset.mjs --dry-run",
+    "eval:tb": "node eval/runners/tb-subset.mjs --arm both",
+    "eval:tb-summarize": "node eval/runners/summarize-tb.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -28,6 +31,11 @@
   "evosubagent": {
     "piPackage": "@earendil-works/pi-coding-agent",
     "piVersionPin": "0.80.10",
-    "defaultLiveModel": "cpa-oai/grok-4.5"
+    "defaultLiveModel": "cpa-oai/grok-4.5",
+    "tbSubset": {
+      "config": "eval/configs/tb-subset-v0.json",
+      "dataset": "terminal-bench@2.0",
+      "taskListHash": "87030810172cd45c"
+    }
   }
 }
