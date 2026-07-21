@@ -25,3 +25,5 @@ jobs/
 
 __pycache__/
 *.pyc
+
+.tmp-bake/
