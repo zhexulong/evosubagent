@@ -14,6 +14,7 @@ import { resolveProjectPaths } from './paths.mjs';
  *   materializedContextRef?: string,
  *   resultSummary?: string,
  *   runId?: string,
+ *   runtime?: string,
  * }} input
  */
 export async function writeRunRecord(input) {
@@ -34,7 +35,9 @@ export async function writeRunRecord(input) {
     materializedContextRef: input.materializedContextRef ?? null,
     resultSummary: input.resultSummary ?? null,
     createdAt: new Date().toISOString(),
-    runtime: 'pi-first-stub',
+    runtime: typeof input.runtime === 'string' && input.runtime.trim()
+      ? input.runtime.trim()
+      : 'pi-first-stub',
   };
 
   await mkdir(paths.runsPath, { recursive: true });

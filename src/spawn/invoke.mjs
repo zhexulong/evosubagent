@@ -1,22 +1,28 @@
 import { materializeSubagentContext } from './materialize.mjs';
 import { writeRunRecord } from '../ledger/run.mjs';
 import { requireString } from '../define/schema.mjs';
+import { buildPiChildPrompt, spawnPiChild } from './pi-child.mjs';
 
 /**
  * Stage-1 invoke: hermetic host materialize + deterministic "result"
- * (no live LLM). Live Pi adapter later; contract stays the same.
+ * or optional live Pi child (`runtime: 'pi-child'`).
  *
  * @param {{
  *   projectRoot: string,
  *   subagentName: string,
  *   task: string,
  *   pinVersion?: string,
+ *   runtime?: 'pi-first-stub' | 'pi-child',
+ *   forceLive?: boolean,
  * }} input
  */
 export async function invokeSubagent(input) {
   const projectRoot = requireString(input.projectRoot, 'projectRoot');
   const subagentName = requireString(input.subagentName, 'subagentName');
   const task = requireString(input.task, 'task');
+  const runtime =
+    input.runtime ??
+    (process.env.EVOSUBAGENT_RUNTIME === 'pi-child' ? 'pi-child' : 'pi-first-stub');
 
   const materialized = await materializeSubagentContext({
     projectRoot,
@@ -25,15 +31,50 @@ export async function invokeSubagent(input) {
     pinVersion: input.pinVersion,
   });
 
-  // Deterministic stub result: surface the body prefix instruction if present.
   const body = materialized.context.effective.body;
-  const resultSummary = [
-    `subagent=${subagentName}`,
-    `version=${materialized.activeVersion}`,
-    `task=${task}`,
-    '--- guidance ---',
-    body.slice(0, 500),
-  ].join('\n');
+  /** @type {string} */
+  let resultSummary;
+  /** @type {string} */
+  let runRuntime = 'pi-first-stub';
+
+  if (runtime === 'pi-child') {
+    const prompt = buildPiChildPrompt({
+      subagentName,
+      activeVersion: materialized.activeVersion,
+      definitionDigest: materialized.definitionDigest,
+      body,
+      task,
+    });
+    const child = await spawnPiChild({
+      prompt,
+      projectRoot,
+      force: input.forceLive === true,
+    });
+    runRuntime = child.runtime;
+    if (child.ok) {
+      resultSummary = child.stdout.trim().slice(0, 4000) || '(empty pi stdout)';
+    } else {
+      resultSummary = [
+        `subagent=${subagentName}`,
+        `version=${materialized.activeVersion}`,
+        `task=${task}`,
+        '--- pi-child error ---',
+        child.error ?? 'unknown',
+        child.stderr.slice(0, 1000),
+        child.stdout.slice(0, 500),
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+  } else {
+    resultSummary = [
+      `subagent=${subagentName}`,
+      `version=${materialized.activeVersion}`,
+      `task=${task}`,
+      '--- guidance ---',
+      body.slice(0, 500),
+    ].join('\n');
+  }
 
   const { runRef, record } = await writeRunRecord({
     projectRoot,
@@ -43,6 +84,7 @@ export async function invokeSubagent(input) {
     definitionDigest: materialized.definitionDigest,
     materializedContextRef: materialized.materializedContextRef,
     resultSummary,
+    runtime: runRuntime,
   });
 
   return {

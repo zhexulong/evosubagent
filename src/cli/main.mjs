@@ -14,7 +14,7 @@ function printHelp() {
 
 Usage:
   evosubagent init --project <path> [--template echo-policy|worker]
-  evosubagent invoke --project <path> --name <subagent> --task <text>
+  evosubagent invoke --project <path> --name <subagent> --task <text> [--runtime pi-first-stub|pi-child]
   evosubagent evolve --project <path> --name <subagent> --correction <text> --after-body <text> [--from-run <runId>]
   evosubagent revert --project <path> --name <subagent> --patch-id <id>
   evosubagent doctor --project <path> --name <subagent>
@@ -50,7 +50,17 @@ async function cmdInvoke(args) {
   const projectRoot = resolve(String(args.project ?? '.'));
   const name = String(args.name ?? '');
   const task = String(args.task ?? '');
-  const result = await invokeSubagent({ projectRoot, subagentName: name, task });
+  const runtimeArg = args.runtime;
+  const runtime =
+    runtimeArg === 'pi-child' || runtimeArg === 'pi-first-stub'
+      ? runtimeArg
+      : undefined;
+  const result = await invokeSubagent({
+    projectRoot,
+    subagentName: name,
+    task,
+    runtime,
+  });
   console.log(JSON.stringify({ ok: true, runRef: result.runRef, record: result.record }, null, 2));
 }
 
