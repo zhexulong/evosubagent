@@ -8,6 +8,7 @@ import { loadSubagentDefinition } from '../define/load.mjs';
 import { mergeSubagentLayers } from '../layers/merge.mjs';
 import { runCorrectOnceDemo } from './demo-correct-once.mjs';
 import { initProject } from './init.mjs';
+import { readRunRecord } from '../ledger/run.mjs';
 
 function printHelp() {
   console.log(`evosubagent — Pi-first customizable subagents with min self-improve loop
@@ -61,7 +62,13 @@ async function cmdInvoke(args) {
     task,
     runtime,
   });
-  console.log(JSON.stringify({ ok: true, runRef: result.runRef, record: result.record }, null, 2));
+  const payload = {
+    ok: result.ok,
+    runRef: result.runRef,
+    record: result.record,
+  };
+  console.log(JSON.stringify(payload, null, 2));
+  if (!result.ok) process.exit(1);
 }
 
 async function cmdEvolve(args) {
@@ -79,7 +86,11 @@ async function cmdEvolve(args) {
   /** @type {string[]} */
   const sourceRefs = ['cli:evolve'];
   if (fromRun && fromRun !== true) {
-    sourceRefs.push(String(fromRun));
+    const runId = String(fromRun);
+    const { record } = await readRunRecord(projectRoot, runId);
+    sourceRefs.push(runId);
+    if (record.definitionDigest) sourceRefs.push(`digest:${record.definitionDigest}`);
+    if (record.task) sourceRefs.push(`task:${String(record.task).slice(0, 120)}`);
   }
   const patch = createAcceptedPatch({
     subagentName: name,

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { requireString } from '../define/schema.mjs';
@@ -33,7 +33,7 @@ export function buildPiChildPrompt(input) {
 }
 
 /**
- * Spawn child `pi -p` with materialize prompt.
+ * Spawn child `pi -p` with materialize prompt on stdin (avoids ARG_MAX).
  * Gated: requires `pi` on PATH and EVOSUBAGENT_LIVE=1 (or force:true).
  *
  * @param {{
@@ -66,28 +66,45 @@ export async function spawnPiChild(input) {
   const piBin = input.piBin ?? process.env.EVOSUBAGENT_PI_BIN ?? 'pi';
   const timeoutMs = input.timeoutMs ?? Number(process.env.EVOSUBAGENT_PI_TIMEOUT_MS ?? 120_000);
 
-  const work = join(tmpdir(), `evosubagent-pi-${process.pid}-${Date.now()}`);
-  await mkdir(work, { recursive: true });
-  const promptPath = join(work, 'prompt.txt');
-  await writeFile(promptPath, prompt, 'utf8');
+  /** @type {string | null} */
+  let work = null;
+  if (process.env.EVOSUBAGENT_PI_KEEP_PROMPT === '1') {
+    work = join(tmpdir(), `evosubagent-pi-${process.pid}-${Date.now()}`);
+    await mkdir(work, { recursive: true });
+    await writeFile(join(work, 'prompt.txt'), prompt, 'utf8');
+  }
 
   return new Promise((resolvePromise) => {
-    /** @type {import('node:child_process').ChildProcessWithoutNullStreams} */
-    const child = spawn(piBin, ['-p', prompt], {
+    const child = spawn(piBin, ['-p'], {
       cwd: projectRoot,
       env: { ...process.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     let stdout = '';
     let stderr = '';
     let settled = false;
 
-    const timer = setTimeout(() => {
+    /**
+     * @param {{
+     *   ok: boolean,
+     *   stdout: string,
+     *   stderr: string,
+     *   exitCode: number | null,
+     *   runtime: string,
+     *   error?: string,
+     * }} result
+     */
+    const finish = (result) => {
       if (settled) return;
-      child.kill('SIGTERM');
       settled = true;
-      resolvePromise({
+      clearTimeout(timer);
+      resolvePromise(result);
+    };
+
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      finish({
         ok: false,
         stdout,
         stderr: `${stderr}\n[timeout after ${timeoutMs}ms]`.trim(),
@@ -104,10 +121,7 @@ export async function spawnPiChild(input) {
       stderr += String(d);
     });
     child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolvePromise({
+      finish({
         ok: false,
         stdout,
         stderr,
@@ -117,10 +131,7 @@ export async function spawnPiChild(input) {
       });
     });
     child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolvePromise({
+      finish({
         ok: code === 0,
         stdout,
         stderr,
@@ -129,5 +140,8 @@ export async function spawnPiChild(input) {
         error: code === 0 ? undefined : `pi exited ${code}`,
       });
     });
+
+    child.stdin.write(prompt);
+    child.stdin.end();
   });
 }

@@ -15,6 +15,7 @@ import { resolveProjectPaths } from './paths.mjs';
  *   resultSummary?: string,
  *   runId?: string,
  *   runtime?: string,
+ *   status?: 'ok' | 'error',
  * }} input
  */
 export async function writeRunRecord(input) {
@@ -24,6 +25,7 @@ export async function writeRunRecord(input) {
   const task = requireString(input.task, 'task');
   const activeVersion = requireString(input.activeVersion, 'activeVersion');
   const definitionDigest = requireString(input.definitionDigest, 'definitionDigest');
+  const status = input.status === 'error' ? 'error' : 'ok';
 
   const record = {
     schemaVersion: 1,
@@ -34,6 +36,7 @@ export async function writeRunRecord(input) {
     definitionDigest,
     materializedContextRef: input.materializedContextRef ?? null,
     resultSummary: input.resultSummary ?? null,
+    status,
     createdAt: new Date().toISOString(),
     runtime: typeof input.runtime === 'string' && input.runtime.trim()
       ? input.runtime.trim()
