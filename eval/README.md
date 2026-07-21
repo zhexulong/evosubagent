@@ -34,7 +34,7 @@ eval/
 | Model | **`cpa-oai/grok-4.5`** |
 | Pi | `@earendil-works/pi-coding-agent@0.80.10` |
 | A0 agent | `eval.harbor_agents.pi_a0:PiA0` |
-| B0_cold agent | `eval.harbor_agents.pi_b0_cold:PiB0Cold` |
+| B0_cold agent | `eval.harbor_agents.pi_b0_cold:PiB0Cold` (upload src → init cold-presets → **materialize** → Pi) |
 
 ### Setup (once)
 
@@ -83,3 +83,16 @@ node eval/runners/summarize-tb.mjs eval/out/tb-subset-*.json
 | A0 | Control placeholders |
 | B0_cold | Template only (no evolve) |
 | B_mech | Host evolve — **mechanism only** |
+
+
+### B0_cold real path (required)
+
+B0_cold must **not** only prepend prose about subagents. It:
+
+1. Uploads this repo's `src/` into the Harbor container
+2. Runs `evosubagent init --template cold-presets`
+3. Calls `materializeSubagentContext` per task (ledger snapshot under `.evosubagent/materialized/`)
+4. Builds the docs/06 prompt contract via `buildPiChildPrompt`
+5. Runs Pi with that prompt
+
+Proof artifacts under `/logs/agent/`: `materialize.json`, `materialized-prompt.txt`.

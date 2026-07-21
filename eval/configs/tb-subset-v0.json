@@ -46,7 +46,9 @@
     "B0_cold": {
       "role": "cold-subagent",
       "agent": "eval.harbor_agents.pi_b0_cold:PiB0Cold",
-      "description": "Pi + EvoSubagent init templates (worker/explore/reviewer); evolve disabled"
+      "description": "Upload real src/ → init cold-presets → materializeSubagentContext (no evolve) → Pi with docs/06 prompt",
+      "materialize": true,
+      "evolve": false
     }
   },
   "harbor": {
