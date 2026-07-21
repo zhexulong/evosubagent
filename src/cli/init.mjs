@@ -20,9 +20,31 @@ Rules:
     body: `You are a coding worker subagent.
 
 Rules:
-- Prefer small, testable changes.
-- Do not invent APIs that are not in the repo.
-- Report what you changed briefly.
+- Prefer small, testable shell/code changes that satisfy the task.
+- Inspect the environment before editing.
+- Do not invent APIs that are not present.
+- Finish when verification would pass.
+`,
+  },
+  explore: {
+    name: 'explore',
+    description: 'Use when you need to locate files, configs, or understand environment layout before editing.',
+    body: `You are an explore subagent.
+
+Rules:
+- Map the filesystem and relevant configs first.
+- Prefer read-only inspection commands.
+- Hand off a concise map for the worker.
+`,
+  },
+  reviewer: {
+    name: 'reviewer',
+    description: 'Use when checking whether a change satisfies the task tests or acceptance criteria.',
+    body: `You are a reviewer subagent.
+
+Rules:
+- Re-read the instruction and run verification-oriented checks.
+- Call out missing steps before declaring done.
 `,
   },
 };
@@ -67,17 +89,30 @@ export async function initProject(input) {
   let templateName = null;
 
   const templateArg = input.template;
+  /** @type {string[]} */
+  const installed = [];
   if (templateArg && templateArg !== true) {
-    const key = String(templateArg);
-    const def = TEMPLATES[/** @type {keyof typeof TEMPLATES} */ (key)];
-    if (!def) {
-      throw new Error(`unknown init template: ${key} (try echo-policy or worker)`);
+    const raw = String(templateArg);
+    const keys =
+      raw === 'cold-presets'
+        ? ['worker', 'explore', 'reviewer']
+        : raw.split(',').map((s) => s.trim()).filter(Boolean);
+    for (const key of keys) {
+      const def = TEMPLATES[/** @type {keyof typeof TEMPLATES} */ (key)];
+      if (!def) {
+        throw new Error(
+          `unknown init template: ${key} (try echo-policy, worker, explore, reviewer, cold-presets)`,
+        );
+      }
+      const dir = join(paths.subagentsPath, def.name);
+      await mkdir(dir, { recursive: true });
+      const path = join(dir, 'SUBAGENT.md');
+      await writeFile(path, renderSubagentMd(def), 'utf8');
+      installed.push(def.name);
+      if (!subagentPath) subagentPath = path;
+      if (!templateName) templateName = def.name;
     }
-    templateName = def.name;
-    const dir = join(paths.subagentsPath, def.name);
-    await mkdir(dir, { recursive: true });
-    subagentPath = join(dir, 'SUBAGENT.md');
-    await writeFile(subagentPath, renderSubagentMd(def), 'utf8');
+    if (installed.length > 1) templateName = installed.join(',');
   }
 
   return {
@@ -92,6 +127,7 @@ export async function initProject(input) {
       'materialized/',
     ],
     template: templateName,
+    templates: installed,
     subagentPath,
   };
 }
