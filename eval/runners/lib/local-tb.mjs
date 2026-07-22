@@ -46,6 +46,29 @@ export function run(cmd, args, opts = {}) {
   });
 }
 
+/**
+ * Clear agent/verifier log files written as root inside prior docker runs.
+ * Host-side writeFile hits EACCES on root-owned pi-out.txt after rate-limit retry.
+ * @param {string} logsDir host path mounted as /logs
+ * @param {string} image docker image with bash
+ */
+export async function clearAgentLogsViaDocker(logsDir, image) {
+  await run(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '-v',
+      `${logsDir}:/logs`,
+      image,
+      'bash',
+      '-lc',
+      'mkdir -p /logs/agent /logs/verifier; : > /logs/agent/pi-out.txt; echo 0 > /logs/verifier/reward.txt; chmod -R a+rwX /logs/agent /logs/verifier 2>/dev/null || true',
+    ],
+    { timeoutMs: 120_000 },
+  );
+}
+
 /** @param {number} ms */
 export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -381,13 +404,8 @@ exit 0
         `rate-limit retry ${attempt}/${maxRetries} after ${wait}ms (${rateLimitReason ?? ''})\n`,
       );
       await sleep(wait);
-      // clear previous agent/verifier outputs before re-run
-      await writeFile(join(logs, 'agent', 'pi-out.txt'), '');
-      try {
-        await writeFile(join(logs, 'verifier', 'reward.txt'), '0\n');
-      } catch {
-        /* ignore */
-      }
+      // Docker may leave root-owned logs; clear via container, not host write.
+      await clearAgentLogsViaDocker(logs, input.image);
     }
 
     result = await run(
