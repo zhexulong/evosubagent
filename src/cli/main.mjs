@@ -7,6 +7,7 @@ import { revertEvolutionPatch } from '../evolve/revert.mjs';
 import { loadSubagentDefinition } from '../define/load.mjs';
 import { mergeSubagentLayers } from '../layers/merge.mjs';
 import { runCorrectOnceDemo } from './demo-correct-once.mjs';
+import { runB1Demo } from './demo-b1.mjs';
 import { initProject } from './init.mjs';
 import { readRunRecord } from '../ledger/run.mjs';
 import { listRunHistory } from './history.mjs';
@@ -24,11 +25,13 @@ Usage:
   evosubagent revert --project <path> --name <subagent> --patch-id <id>
   evosubagent doctor --project <path> --name <subagent>
   evosubagent demo correct-once --project <path>
+  evosubagent demo b1 --project <path>
   evosubagent --help
 
 Notes:
   history  lists .evosubagent/runs (newest first)
   correct  same kernel as evolve, run-linked correction UX (prefer over evolve for product demos)
+  demo b1  product loop: invoke → history → correct(--from-run) → invoke (see docs/b1-protocol.md)
 `);
 }
 
@@ -227,6 +230,11 @@ async function main() {
     else if (cmd === 'demo' && sub === 'correct-once') {
       const projectRoot = resolve(String(args.project ?? './fixtures/demo-correct-once/project'));
       const report = await runCorrectOnceDemo({ projectRoot });
+      console.log(JSON.stringify(report, null, 2));
+      process.exit(report.pass ? 0 : 1);
+    } else if (cmd === 'demo' && sub === 'b1') {
+      const projectRoot = resolve(String(args.project ?? './fixtures/demo-correct-once/project'));
+      const report = await runB1Demo({ projectRoot });
       console.log(JSON.stringify(report, null, 2));
       process.exit(report.pass ? 0 : 1);
     } else if (cmd === 'init') {

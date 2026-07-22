@@ -26,6 +26,8 @@ Full design set under [`docs/`](./docs/00-design-index.md):
 | [docs/12-implementation-checklist.md](./docs/12-implementation-checklist.md) | PR checklist |
 | [docs/13-evaluation-and-benchmarks.md](./docs/13-evaluation-and-benchmarks.md) | Mature bench eval (TB / EvoCode / …) |
 | [docs/14-implementation-start.md](./docs/14-implementation-start.md) | How to start coding |
+| [docs/15-live-eval-gate.md](./docs/15-live-eval-gate.md) | Real Pi + real eval for PR-grade work |
+| [docs/16-pi-config-from-opencode.md](./docs/16-pi-config-from-opencode.md) | Pi models aligned with OpenCode |
 
 ## D0 scope lock
 
@@ -95,6 +97,7 @@ test/
 cd /home/prosumer/agent/evosubagent
 npm test
 npm run demo:correct-once
+npm run demo:b1   # product path: history → correct(--from-run) → invoke
 node ./src/cli/main.mjs --help
 ```
 
