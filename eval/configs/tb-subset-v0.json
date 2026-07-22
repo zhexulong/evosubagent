@@ -41,14 +41,16 @@
     "A0": {
       "role": "control",
       "agent": "eval.harbor_agents.pi_a0:PiA0",
-      "description": "Bare Pi (earendil pin) inside Harbor container; no EvoSubagent"
+      "description": "Bare Pi (earendil pin) inside Harbor container; no EvoSubagent",
+      "armKind": "bare_pi_a0"
     },
     "B0_cold": {
       "role": "cold-subagent",
       "agent": "eval.harbor_agents.pi_b0_cold:PiB0Cold",
-      "description": "Upload real src/ → init cold-presets → materializeSubagentContext (no evolve) → Pi with docs/06 prompt",
+      "description": "kernel_b0_cold: package src in env, init cold-presets, materializeSubagentContext + writeRunRecord (evolve off), Pi on docs/06 prompt",
       "materialize": true,
-      "evolve": false
+      "evolve": false,
+      "armKind": "kernel_b0_cold"
     }
   },
   "harbor": {

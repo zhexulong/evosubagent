@@ -13,14 +13,29 @@ import {
 describe('local-tb helpers', () => {
   it('summarizeDelta computes pass rates and ΔResolve', () => {
     const s = summarizeDelta([
-      { arm: 'A0', taskId: 't1', reward: 1, pass: true },
-      { arm: 'A0', taskId: 't2', reward: 0, pass: false },
-      { arm: 'B0_cold', taskId: 't1', reward: 1, pass: true },
-      { arm: 'B0_cold', taskId: 't2', reward: 1, pass: true },
+      { arm: 'A0', taskId: 't1', reward: 1, pass: true, outcome: 'pass' },
+      { arm: 'A0', taskId: 't2', reward: 0, pass: false, outcome: 'fail' },
+      { arm: 'B0_cold', taskId: 't1', reward: 1, pass: true, outcome: 'pass' },
+      { arm: 'B0_cold', taskId: 't2', reward: 1, pass: true, outcome: 'pass' },
     ]);
     assert.equal(s.arms.A0.passRate, 0.5);
     assert.equal(s.arms.B0_cold.passRate, 1);
     assert.equal(s.deltaResolve, 0.5);
+  });
+
+  it('summarizeDelta excludes infra from Δ denominator', () => {
+    const s = summarizeDelta([
+      { arm: 'A0', taskId: 't1', reward: 1, outcome: 'pass' },
+      { arm: 'A0', taskId: 't2', reward: 0, outcome: 'infra', rateLimited: true },
+      { arm: 'B0_cold', taskId: 't1', reward: 0, outcome: 'infra', rateLimited: true },
+      { arm: 'B0_cold', taskId: 't2', reward: 1, outcome: 'pass' },
+    ]);
+    assert.equal(s.arms.A0.n, 1);
+    assert.equal(s.arms.A0.infra, 1);
+    assert.equal(s.arms.B0_cold.n, 1);
+    assert.equal(s.arms.B0_cold.infra, 1);
+    assert.equal(s.deltaResolve, 0);
+    assert.equal(s.infraExcludedFromDelta, true);
   });
 
   it('loadSubsetConfig validates frozen hash', async () => {

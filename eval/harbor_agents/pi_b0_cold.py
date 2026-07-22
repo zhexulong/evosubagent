@@ -129,12 +129,11 @@ class PiB0Cold(BaseInstalledAgent):
         )
 
     def _materialize_node_script(self, task: str, subagent: str) -> str:
-        """JS executed in-container: materialize cold definition → write prompt file."""
-        # Escape task for embedding in single-quoted heredoc is handled by outer heredoc
         return f"""\
-import {{ writeFile, mkdir }} from 'node:fs/promises';
+import {{ writeFile }} from 'node:fs/promises';
 import {{ materializeSubagentContext }} from '{REMOTE_EVOSUBAGENT_ROOT}/src/spawn/materialize.mjs';
 import {{ buildPiChildPrompt }} from '{REMOTE_EVOSUBAGENT_ROOT}/src/spawn/pi-child.mjs';
+import {{ writeRunRecord }} from '{REMOTE_EVOSUBAGENT_ROOT}/src/ledger/run.mjs';
 
 const projectRoot = {json_dumps(REMOTE_PROJECT_ROOT)};
 const subagentName = {json_dumps(subagent)};
@@ -147,6 +146,10 @@ if (!mat?.context?.effective?.body) {{
 if (!mat.activeVersion) {{
   throw new Error('materialize missing activeVersion');
 }}
+const patches = mat.context.appliedPatches ?? [];
+if (Array.isArray(patches) && patches.length > 0) {{
+  throw new Error('B0_cold requires evolve off: appliedPatches must be empty');
+}}
 const prompt = buildPiChildPrompt({{
   subagentName,
   activeVersion: mat.activeVersion,
@@ -155,17 +158,35 @@ const prompt = buildPiChildPrompt({{
   task,
 }});
 await writeFile({json_dumps(REMOTE_PROMPT_TXT)}, prompt, 'utf8');
+
+// Pre-flight ledger row (kernel path); status updated after Pi if needed.
+const ledger = await writeRunRecord({{
+  projectRoot,
+  subagentName,
+  task,
+  activeVersion: mat.activeVersion,
+  definitionDigest: mat.definitionDigest,
+  materializedContextRef: mat.materializedContextRef,
+  resultSummary: 'b0_cold_pre_pi',
+  runtime: 'pi-child-harbor-b0',
+  status: 'ok',
+}});
+
 await writeFile(
   {json_dumps(REMOTE_MATERIALIZE_JSON)},
   JSON.stringify(
     {{
       ok: true,
       arm: 'B0_cold',
+      armKind: 'kernel_b0_cold',
+      evolve: false,
       subagentName,
       activeVersion: mat.activeVersion,
       definitionDigest: mat.definitionDigest,
-      appliedPatches: mat.context.appliedPatches ?? [],
+      appliedPatches: patches,
       materializedContextRef: mat.materializedContextRef,
+      runId: ledger.record.runId,
+      runRef: ledger.runRef,
       bodyPreview: String(mat.context.effective.body).slice(0, 200),
     }},
     null,
@@ -177,6 +198,7 @@ console.log(JSON.stringify({{
   ok: true,
   activeVersion: mat.activeVersion,
   definitionDigest: mat.definitionDigest,
+  runId: ledger.record.runId,
   promptBytes: Buffer.byteLength(prompt),
 }}));
 """
@@ -225,7 +247,6 @@ console.log(JSON.stringify({{
             env=env,
         )
 
-        # Copy materialize proof into Harbor agent logs for post-hoc audit
         await self.exec_as_agent(
             environment,
             command=(
@@ -244,13 +265,53 @@ console.log(JSON.stringify({{
         )
         await self.exec_as_agent(environment, command=cmd, env=env)
 
+        post_script = self._post_pi_ledger_script()
+        post_path = "/tmp/evosubagent-post-pi-ledger.mjs"
+        await self.exec_as_agent(
+            environment,
+            command=(
+                f"cat > {post_path} <<'EVO_POST_EOF'\n"
+                f"{post_script}"
+                "EVO_POST_EOF\n"
+                f". ~/.nvm/nvm.sh 2>/dev/null || true; node {post_path}"
+            ),
+            env=env,
+        )
+        await self.exec_as_agent(
+            environment,
+            command=(
+                f"cp -a {REMOTE_PROJECT_ROOT}/.evosubagent/runs /logs/agent/runs 2>/dev/null || true"
+            ),
+            env=env,
+        )
+
+    def _post_pi_ledger_script(self) -> str:
+        return f"""\
+import {{ readFile, writeFile }} from 'node:fs/promises';
+import {{ readRunRecord }} from '{REMOTE_EVOSUBAGENT_ROOT}/src/ledger/run.mjs';
+
+const meta = JSON.parse(await readFile({json_dumps(REMOTE_MATERIALIZE_JSON)}, 'utf8'));
+if (!meta.runId) process.exit(0);
+const pi = await readFile('/logs/agent/{self._OUTPUT_FILENAME}', 'utf8').catch(() => '');
+const rate = /Concurrency limit exceeded|rate.?limit|please retry later|429/i.test(pi);
+const {{ runRef, record }} = await readRunRecord({json_dumps(REMOTE_PROJECT_ROOT)}, meta.runId);
+record.resultSummary = pi.slice(0, 500);
+record.status = rate ? 'error' : 'ok';
+record.runtime = 'pi-child-harbor-b0';
+await writeFile(runRef, JSON.stringify(record, null, 2) + '\\n');
+await writeFile(
+  '/logs/agent/run-ledger.json',
+  JSON.stringify({{ ...record, runRef }}, null, 2) + '\\n',
+);
+console.log(JSON.stringify({{ ok: true, runId: meta.runId, status: record.status, rateLimited: rate }}));
+"""
+
     @override
     def populate_context_post_run(self, context: AgentContext) -> None:
         populate_usage_from_pi_jsonl(Path(self.logs_dir), self._OUTPUT_FILENAME, context)
 
 
 def json_dumps(value: str) -> str:
-    """JSON-encode a string for embedding in generated JS source."""
     import json
 
     return json.dumps(value)

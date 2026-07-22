@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { initProject } from '../../../src/cli/init.mjs';
 import { materializeSubagentContext } from '../../../src/spawn/materialize.mjs';
 import { buildPiChildPrompt } from '../../../src/spawn/pi-child.mjs';
+import { writeRunRecord } from '../../../src/ledger/run.mjs';
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 export const DEFAULT_CACHE = resolve(REPO, 'eval/cache/terminal-bench-2.0');
@@ -424,14 +425,56 @@ exit 0
     if (attempt >= maxRetries) break;
   }
 
+  // Kernel path: write run ledger for B0_cold when project exists (smoke-isomorphic artifact)
+  /** @type {{ runId?: string, runRef?: string }|null} */
+  let ledger = null;
+  if (input.arm === 'B0_cold' && materializeMeta) {
+    try {
+      const projectRoot = join(work, 'evo-project');
+      const piText = await readFile(join(logs, 'agent', 'pi-out.txt'), 'utf8').catch(() => '');
+      const summary = piText.slice(0, 500) || (rateLimited ? `rate-limited: ${rateLimitReason}` : '');
+      const written = await writeRunRecord({
+        projectRoot,
+        subagentName: 'worker',
+        task: input.instruction.slice(0, 2000),
+        activeVersion: String(materializeMeta.activeVersion),
+        definitionDigest: String(materializeMeta.definitionDigest),
+        materializedContextRef:
+          typeof materializeMeta.materializedContextRef === 'string'
+            ? materializeMeta.materializedContextRef
+            : undefined,
+        resultSummary: summary,
+        runtime: 'pi-child-local-tb',
+        status: rateLimited && reward !== 1 ? 'error' : reward === 1 ? 'ok' : 'error',
+      });
+      ledger = { runId: written.record.runId, runRef: written.runRef };
+      await writeFile(
+        join(logs, 'agent', 'run-ledger.json'),
+        `${JSON.stringify({ ...written.record, runRef: written.runRef }, null, 2)}\n`,
+      );
+    } catch (e) {
+      ledger = { error: String(/** @type {Error} */ (e).message ?? e) };
+    }
+  }
+
+  /** @type {'pass'|'fail'|'infra'} */
+  let outcome = 'fail';
+  if (rateLimited && reward !== 1) outcome = 'infra';
+  else if (reward === 1) outcome = 'pass';
+  else if (reward == null && result.code !== 0) outcome = 'infra';
+  else outcome = 'fail';
+
   return {
     arm: input.arm,
     taskId: input.taskId,
+    armKind: input.arm === 'B0_cold' ? 'kernel_b0_cold' : 'bare_pi_a0',
     reward,
     pass: reward === 1,
+    outcome,
     wall_s: (Date.now() - started) / 1000,
     dockerExit: result.code,
     materialize: materializeMeta,
+    ledger,
     modelRef: `${provider}/${model}`,
     image: input.image,
     logsDir: logs,
@@ -449,30 +492,42 @@ exit 0
 }
 
 /**
- * @param {Array<{ arm: string, taskId: string, pass?: boolean, reward?: number|null }>} results
+ * @param {Array<{ arm: string, taskId: string, pass?: boolean, reward?: number|null, outcome?: string, rateLimited?: boolean }>} results
  */
 export function summarizeDelta(results) {
-  /** @type {Record<string, { n: number, pass: number, rewards: number[] }>} */
+  /** @type {Record<string, { n: number, pass: number, fail: number, infra: number, rewards: number[] }>} */
   const byArm = {};
   for (const r of results) {
-    const b = (byArm[r.arm] ??= { n: 0, pass: 0, rewards: [] });
+    const b = (byArm[r.arm] ??= { n: 0, pass: 0, fail: 0, infra: 0, rewards: [] });
+    const outcome =
+      r.outcome ||
+      (r.rateLimited && r.reward !== 1 ? 'infra' : r.pass || r.reward === 1 ? 'pass' : 'fail');
+    if (outcome === 'infra') {
+      b.infra += 1;
+      continue;
+    }
     b.n += 1;
-    if (r.pass || r.reward === 1) b.pass += 1;
-    if (typeof r.reward === 'number') b.rewards.push(r.reward);
+    if (outcome === 'pass' || r.pass || r.reward === 1) b.pass += 1;
+    else b.fail += 1;
+    if (typeof r.reward === 'number' && outcome !== 'infra') b.rewards.push(r.reward);
   }
-  /** @type {Record<string, { n: number, pass: number, passRate: number }>} */
+  /** @type {Record<string, { n: number, pass: number, fail: number, infra: number, passRate: number|null }>} */
   const arms = {};
   for (const [arm, s] of Object.entries(byArm)) {
     arms[arm] = {
       n: s.n,
       pass: s.pass,
-      passRate: s.n ? s.pass / s.n : 0,
+      fail: s.fail,
+      infra: s.infra,
+      passRate: s.n ? s.pass / s.n : null,
     };
   }
   const a0 = arms.A0?.passRate;
   const b0 = arms.B0_cold?.passRate;
   return {
     arms,
+    /** only scored trials (excludes infra) */
     deltaResolve: a0 != null && b0 != null ? b0 - a0 : null,
+    infraExcludedFromDelta: true,
   };
 }

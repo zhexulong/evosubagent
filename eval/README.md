@@ -137,3 +137,12 @@ npm run eval:fix-git-dual
 ```
 
 B0_cold path still uses real `materializeSubagentContext` + `buildPiChildPrompt`.
+
+### Arm kinds (quality reports)
+
+| Arm | armKind | Must have |
+| --- | --- | --- |
+| A0 | bare_pi_a0 | no EvoSubagent |
+| B0_cold | **kernel_b0_cold** | materialize + run ledger; appliedPatches=[] |
+
+Infra (rate-limit) is **excluded from ΔResolve**. See `eval/REPORT_TEMPLATE.md`.
