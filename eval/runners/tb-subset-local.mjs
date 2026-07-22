@@ -30,6 +30,7 @@ import {
   loadSubsetConfig,
   readTaskMeta,
   runLocalArm,
+  sleep,
   summarizeDelta,
 } from './lib/local-tb.mjs';
 
@@ -77,6 +78,7 @@ Flags:
   --ensure-images         crane pull + docker load missing images (uses host proxy)
   --bake-pi               bake nvm+pi into images missing pi
   --skip-missing-images   skip tasks whose image is not local (instead of failing)
+  --arm-cooldown-ms N     sleep between arms (default env or 30000)
   --dry-run               plan only
 
 Env:
@@ -85,6 +87,9 @@ Env:
   EVOSUBAGENT_PI_PROVIDER (default cpa-oai)
   EVOSUBAGENT_LOCAL_GATEWAY_URL (default http://127.0.0.1:8317/v1)
   EVOSUBAGENT_LOCAL_PROXY (default http://127.0.0.1:7897)
+  EVOSUBAGENT_ARM_COOLDOWN_MS (default 30000)
+  EVOSUBAGENT_RATE_LIMIT_RETRIES (default 2)
+  EVOSUBAGENT_RATE_LIMIT_BACKOFF_MS (default 45000)
   CRANE_BIN
 `);
 }
@@ -210,7 +215,15 @@ async function main() {
     const meta = await readTaskMeta(taskDir);
     const timeoutMs = Math.max(meta.agentTimeoutSec, meta.verifierTimeoutSec) * 1000 + 120_000;
 
-    for (const arm of arms) {
+    const armCooldownMs = Number(
+      args.armCooldownMs ?? process.env.EVOSUBAGENT_ARM_COOLDOWN_MS ?? 30_000,
+    );
+    for (let ai = 0; ai < arms.length; ai++) {
+      const arm = arms[ai];
+      if (ai > 0 && armCooldownMs > 0) {
+        process.stderr.write(`arm cooldown ${armCooldownMs}ms...\n`);
+        await sleep(armCooldownMs);
+      }
       process.stderr.write(`\n=== ${arm} / ${item.taskId} ===\n`);
       const r = await runLocalArm({
         arm,
@@ -225,7 +238,8 @@ async function main() {
       });
       results.push(r);
       process.stderr.write(
-        `→ reward=${r.reward} wall_s=${r.wall_s.toFixed(1)} ${r.error ? r.error : 'ok'}\n`,
+        `→ reward=${r.reward} wall_s=${r.wall_s.toFixed(1)} attempts=${r.attempts ?? 1}` +
+          `${r.rateLimited ? ' RATE_LIMITED' : ''} ${r.error ? r.error : 'ok'}\n`,
       );
     }
   }
