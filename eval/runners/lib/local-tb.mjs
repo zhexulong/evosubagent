@@ -284,6 +284,10 @@ export async function runLocalArm(input) {
   );
 
   const keyShell = input.apiKey.replace(/'/g, `'\\''`);
+  const agentCapSec = Math.max(
+    120,
+    Math.floor(((input.timeoutMs || 900_000) * 0.7) / 1000),
+  );
   const script = `set -euo pipefail
 export http_proxy='${proxy}'
 export https_proxy='${proxy}'
@@ -294,20 +298,26 @@ export OPENAI_API_KEY="$CPA_OAI_API_KEY"
 mkdir -p /root/.pi/agent /logs/agent /logs/verifier
 cp /work/models.json /root/.pi/agent/models.json
 PROMPT=$(cat /work/prompt.txt)
-# Prefer task WORKDIR if present; fallback common TB paths
 if [ -d /app/personal-site ]; then cd /app/personal-site
 elif [ -d /workspace ]; then cd /workspace
 elif [ -d /app ]; then cd /app
 else cd /
 fi
 set +e
-pi --print --mode json --session-dir /logs/agent/pi-sessions \\
+# Cap agent wall time; use double quotes so $PROMPT expands.
+timeout ${agentCapSec}s pi --print --mode json --session-dir /logs/agent/pi-sessions \\
   --provider ${provider} --model ${model} "$PROMPT" \\
   2>&1 </dev/null | grep -v '"type":"message_update"' | tee /logs/agent/pi-out.txt
+AGENT_EC=\${PIPESTATUS[0]}
 set -e
 if [ -f /work/tests/test.sh ]; then
   bash /work/tests/test.sh || true
 fi
+if [ ! -f /logs/verifier/reward.txt ]; then
+  echo 0 > /logs/verifier/reward.txt
+fi
+echo AGENT_EC=\$AGENT_EC
+exit 0
 `;
   await writeFile(join(work, 'run.sh'), script);
 
@@ -327,7 +337,7 @@ fi
       'bash',
       '/work/run.sh',
     ],
-    { timeoutMs: input.timeoutMs || 900_000 },
+    { timeoutMs: (input.timeoutMs || 900_000) + 60_000 },
   );
 
   let reward = null;
