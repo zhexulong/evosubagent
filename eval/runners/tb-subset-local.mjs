@@ -68,6 +68,7 @@ Usage:
   node eval/runners/tb-subset-local.mjs --dry-run
   node eval/runners/tb-subset-local.mjs --task fix-git
   node eval/runners/tb-subset-local.mjs --limit 3 --arm both
+  node eval/runners/tb-subset-local.mjs --task fix-git --trials 2 --arm both
   node eval/runners/tb-subset-local.mjs --ensure-images --bake-pi --limit 2
 
 Flags:
@@ -75,6 +76,8 @@ Flags:
   --task <id>             single task from frozen list
   --include a,b,c         filter frozen list
   --limit N               first N after filters
+  --trials N              repeat each task×arm N times (default 1)
+  --trial-cooldown-ms N   sleep between trials (default arm cooldown)
   --ensure-images         crane pull + docker load missing images (uses host proxy)
   --bake-pi               bake nvm+pi into images missing pi
   --skip-missing-images   skip tasks whose image is not local (instead of failing)
@@ -160,6 +163,14 @@ async function main() {
     });
   }
 
+  const trials = Math.max(1, Number(args.trials ?? 1) || 1);
+  const armCooldownMs = Number(
+    args.armCooldownMs ?? process.env.EVOSUBAGENT_ARM_COOLDOWN_MS ?? 30_000,
+  );
+  const trialCooldownMs = Number(
+    args.trialCooldownMs ?? armCooldownMs,
+  );
+
   if (args.dryRun) {
     console.log(
       JSON.stringify(
@@ -170,6 +181,9 @@ async function main() {
           taskListHash: config.taskListHash,
           modelRef: config.model.ref,
           arms,
+          trials,
+          armCooldownMs,
+          trialCooldownMs,
           tasks: plan,
           missingImages: plan.filter((p) => p.image && !p.present).map((p) => p.image),
         },
@@ -215,32 +229,35 @@ async function main() {
     const meta = await readTaskMeta(taskDir);
     const timeoutMs = Math.max(meta.agentTimeoutSec, meta.verifierTimeoutSec) * 1000 + 120_000;
 
-    const armCooldownMs = Number(
-      args.armCooldownMs ?? process.env.EVOSUBAGENT_ARM_COOLDOWN_MS ?? 30_000,
-    );
-    for (let ai = 0; ai < arms.length; ai++) {
-      const arm = arms[ai];
-      if (ai > 0 && armCooldownMs > 0) {
-        process.stderr.write(`arm cooldown ${armCooldownMs}ms...\n`);
-        await sleep(armCooldownMs);
+    for (let trial = 1; trial <= trials; trial++) {
+      if (trial > 1 && trialCooldownMs > 0) {
+        process.stderr.write(`trial cooldown ${trialCooldownMs}ms before trial ${trial}...\n`);
+        await sleep(trialCooldownMs);
       }
-      process.stderr.write(`\n=== ${arm} / ${item.taskId} ===\n`);
-      const r = await runLocalArm({
-        arm,
-        taskId: item.taskId,
-        taskDir,
-        image: item.image,
-        instruction: meta.instruction,
-        apiKey,
-        provider: config.model.provider,
-        model: config.model.modelId,
-        timeoutMs,
-      });
-      results.push(r);
-      process.stderr.write(
-        `→ reward=${r.reward} wall_s=${r.wall_s.toFixed(1)} attempts=${r.attempts ?? 1}` +
-          `${r.rateLimited ? ' RATE_LIMITED' : ''} ${r.error ? r.error : 'ok'}\n`,
-      );
+      for (let ai = 0; ai < arms.length; ai++) {
+        const arm = arms[ai];
+        if (ai > 0 && armCooldownMs > 0) {
+          process.stderr.write(`arm cooldown ${armCooldownMs}ms...\n`);
+          await sleep(armCooldownMs);
+        }
+        process.stderr.write(`\n=== ${arm} / ${item.taskId} trial ${trial}/${trials} ===\n`);
+        const r = await runLocalArm({
+          arm,
+          taskId: item.taskId,
+          taskDir,
+          image: item.image,
+          instruction: meta.instruction,
+          apiKey,
+          provider: config.model.provider,
+          model: config.model.modelId,
+          timeoutMs,
+        });
+        results.push({ ...r, trial });
+        process.stderr.write(
+          `→ reward=${r.reward} wall_s=${r.wall_s.toFixed(1)} attempts=${r.attempts ?? 1}` +
+            `${r.rateLimited ? ' RATE_LIMITED' : ''} ${r.error ? r.error : 'ok'}\n`,
+        );
+      }
     }
   }
 
@@ -256,6 +273,7 @@ async function main() {
     taskListHash: config.taskListHash,
     modelRef: config.model.ref,
     selectedTaskIds: taskIds,
+    trials,
     skipped,
     results,
     summary: delta,
@@ -265,6 +283,7 @@ async function main() {
       'B0_cold = kernel path: materialize + run ledger, evolve off',
       'Local host-network runner (not full Harbor job UI)',
       'Do not claim quality if n_scored < 8 or infra not reviewed',
+      `trials=${trials} (each task×arm repeated independently)`,
     ],
   };
 
@@ -283,23 +302,34 @@ async function main() {
     modelRef: summary.modelRef,
     taskListHash: summary.taskListHash,
     nTasksPlanned: taskIds.length,
+    trials,
     nResults: results.length,
     skipped,
     passRates: delta.arms,
     deltaResolve: delta.deltaResolve,
     infraExcludedFromDelta: delta.infraExcludedFromDelta,
+    perTrial: results.map((r) => ({
+      taskId: r.taskId,
+      arm: r.arm,
+      trial: r.trial ?? 1,
+      reward: r.reward ?? null,
+      outcome: r.outcome ?? null,
+      rateLimited: Boolean(r.rateLimited),
+      materialize: r.materialize?.activeVersion ?? null,
+      runId: r.ledger?.runId ?? null,
+      wall_s: r.wall_s,
+    })),
     perTask: taskIds.map((tid) => {
-      const a0 = results.find((r) => r.taskId === tid && r.arm === 'A0');
-      const b0 = results.find((r) => r.taskId === tid && r.arm === 'B0_cold');
+      const a0s = results.filter((r) => r.taskId === tid && r.arm === 'A0');
+      const b0s = results.filter((r) => r.taskId === tid && r.arm === 'B0_cold');
       return {
         taskId: tid,
-        A0: a0?.reward ?? null,
-        A0_outcome: a0?.outcome ?? null,
-        B0_cold: b0?.reward ?? null,
-        B0_outcome: b0?.outcome ?? null,
-        B0_materialize: b0?.materialize?.activeVersion ?? null,
-        B0_runId: b0?.ledger?.runId ?? null,
-        rateLimited: Boolean(a0?.rateLimited || b0?.rateLimited),
+        A0_rewards: a0s.map((r) => r.reward ?? null),
+        A0_outcomes: a0s.map((r) => r.outcome ?? null),
+        B0_rewards: b0s.map((r) => r.reward ?? null),
+        B0_outcomes: b0s.map((r) => r.outcome ?? null),
+        B0_runIds: b0s.map((r) => r.ledger?.runId ?? null),
+        rateLimited: a0s.some((r) => r.rateLimited) || b0s.some((r) => r.rateLimited),
       };
     }),
   };

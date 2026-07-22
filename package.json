@@ -18,6 +18,7 @@
     "eval:tb": "node eval/runners/tb-subset.mjs --arm both",
     "eval:tb-summarize": "node eval/runners/summarize-tb.mjs",
     "eval:fix-git-dual": "node eval/runners/tb-subset-local.mjs --task fix-git --arm both",
+    "eval:fix-git-dual-x2": "node eval/runners/tb-subset-local.mjs --task fix-git --arm both --trials 2 --arm-cooldown-ms 45000 --trial-cooldown-ms 45000",
     "eval:tb-local": "node eval/runners/tb-subset-local.mjs",
     "eval:tb-local-dry": "node eval/runners/tb-subset-local.mjs --dry-run"
   },
