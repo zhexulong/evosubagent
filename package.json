@@ -10,6 +10,7 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "demo:correct-once": "node ./src/cli/main.mjs demo correct-once --project ./fixtures/demo-correct-once/project",
+    "demo:b1": "node ./src/cli/main.mjs demo b1 --project ./fixtures/demo-correct-once/project",
     "evosubagent": "node ./src/cli/main.mjs",
     "eval:mini": "node eval/runners/mini-bench.mjs",
     "eval:summarize": "node eval/runners/summarize.mjs",
