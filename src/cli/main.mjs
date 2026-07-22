@@ -9,18 +9,26 @@ import { mergeSubagentLayers } from '../layers/merge.mjs';
 import { runCorrectOnceDemo } from './demo-correct-once.mjs';
 import { initProject } from './init.mjs';
 import { readRunRecord } from '../ledger/run.mjs';
+import { listRunHistory } from './history.mjs';
+import { correctFromRun } from './correct.mjs';
 
 function printHelp() {
   console.log(`evosubagent — Pi-first customizable subagents with min self-improve loop
 
 Usage:
-  evosubagent init --project <path> [--template echo-policy|worker]
+  evosubagent init --project <path> [--template echo-policy|worker|cold-presets]
   evosubagent invoke --project <path> --name <subagent> --task <text> [--runtime pi-first-stub|pi-child]
+  evosubagent history --project <path> [--name <subagent>] [--limit N]
+  evosubagent correct --project <path> --name <subagent> --correction <text> --after-body <text> [--from-run <runId>]
   evosubagent evolve --project <path> --name <subagent> --correction <text> --after-body <text> [--from-run <runId>]
   evosubagent revert --project <path> --name <subagent> --patch-id <id>
   evosubagent doctor --project <path> --name <subagent>
   evosubagent demo correct-once --project <path>
   evosubagent --help
+
+Notes:
+  history  lists .evosubagent/runs (newest first)
+  correct  same kernel as evolve, run-linked correction UX (prefer over evolve for product demos)
 `);
 }
 
@@ -168,6 +176,39 @@ async function cmdDoctor(args) {
   );
 }
 
+async function cmdHistory(args) {
+  const projectRoot = resolve(String(args.project ?? '.'));
+  const name = args.name && args.name !== true ? String(args.name) : undefined;
+  const limit = args.limit && args.limit !== true ? Number(args.limit) : 20;
+  const report = await listRunHistory({
+    projectRoot,
+    subagentName: name,
+    limit,
+  });
+  console.log(JSON.stringify(report, null, 2));
+}
+
+async function cmdCorrect(args) {
+  const projectRoot = resolve(String(args.project ?? '.'));
+  const name = String(args.name ?? '');
+  const correction = String(args.correction ?? '');
+  const afterBody = String(args['after-body'] ?? args.afterBody ?? '');
+  const fromRun =
+    args['from-run'] && args['from-run'] !== true
+      ? String(args['from-run'])
+      : args.fromRun && args.fromRun !== true
+        ? String(args.fromRun)
+        : undefined;
+  const result = await correctFromRun({
+    projectRoot,
+    name,
+    correction,
+    afterBody,
+    fromRun,
+  });
+  console.log(JSON.stringify(result, null, 2));
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help || /** @type {string[]} */ (args._).length === 0) {
@@ -178,6 +219,8 @@ async function main() {
 
   try {
     if (cmd === 'invoke') await cmdInvoke(args);
+    else if (cmd === 'history') await cmdHistory(args);
+    else if (cmd === 'correct') await cmdCorrect(args);
     else if (cmd === 'evolve') await cmdEvolve(args);
     else if (cmd === 'revert') await cmdRevert(args);
     else if (cmd === 'doctor') await cmdDoctor(args);
