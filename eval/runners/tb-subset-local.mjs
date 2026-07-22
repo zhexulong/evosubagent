@@ -260,9 +260,11 @@ async function main() {
     results,
     summary: delta,
     notes: [
-      'ΔResolve = passRate(B0_cold) - passRate(A0) on completed tasks',
-      'B0_cold uses real materialize (no evolve)',
+      'ΔResolve = passRate(B0_cold) - passRate(A0) on scored tasks only',
+      'infra (rate-limit etc.) excluded from Δ denominator',
+      'B0_cold = kernel path: materialize + run ledger, evolve off',
       'Local host-network runner (not full Harbor job UI)',
+      'Do not claim quality if n_scored < 8 or infra not reviewed',
     ],
   };
 
@@ -274,6 +276,10 @@ async function main() {
   const table = {
     ok: true,
     outPath,
+    armKind: {
+      A0: 'bare_pi_a0',
+      B0_cold: 'kernel_b0_cold',
+    },
     modelRef: summary.modelRef,
     taskListHash: summary.taskListHash,
     nTasksPlanned: taskIds.length,
@@ -281,14 +287,19 @@ async function main() {
     skipped,
     passRates: delta.arms,
     deltaResolve: delta.deltaResolve,
+    infraExcludedFromDelta: delta.infraExcludedFromDelta,
     perTask: taskIds.map((tid) => {
       const a0 = results.find((r) => r.taskId === tid && r.arm === 'A0');
       const b0 = results.find((r) => r.taskId === tid && r.arm === 'B0_cold');
       return {
         taskId: tid,
         A0: a0?.reward ?? null,
+        A0_outcome: a0?.outcome ?? null,
         B0_cold: b0?.reward ?? null,
+        B0_outcome: b0?.outcome ?? null,
         B0_materialize: b0?.materialize?.activeVersion ?? null,
+        B0_runId: b0?.ledger?.runId ?? null,
+        rateLimited: Boolean(a0?.rateLimited || b0?.rateLimited),
       };
     }),
   };
