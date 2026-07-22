@@ -4,6 +4,7 @@ import { invokeSubagent } from '../spawn/invoke.mjs';
 import { applyEvolutionPatch, loadVersionState } from '../evolve/apply.mjs';
 import { createAcceptedPatch } from '../evolve/patch.mjs';
 import { revertEvolutionPatch } from '../evolve/revert.mjs';
+import { revertToVersion } from '../evolve/revert-to.mjs';
 import { loadSubagentDefinition } from '../define/load.mjs';
 import { mergeSubagentLayers } from '../layers/merge.mjs';
 import { runCorrectOnceDemo } from './demo-correct-once.mjs';
@@ -12,26 +13,38 @@ import { initProject } from './init.mjs';
 import { readRunRecord } from '../ledger/run.mjs';
 import { listRunHistory } from './history.mjs';
 import { correctFromRun } from './correct.mjs';
+import {
+  listSubagents,
+  showRun,
+  listVersionHistory,
+  diffSubagent,
+} from './inspect.mjs';
 
 function printHelp() {
-  console.log(`evosubagent — Pi-first customizable subagents with min self-improve loop
+  console.log(`evosubagent — teach coding agents once; versioned rules for future runs
 
 Usage:
   evosubagent init --project <path> [--template echo-policy|worker|cold-presets]
+  evosubagent list --project <path>
   evosubagent invoke --project <path> --name <subagent> --task <text> [--runtime pi-first-stub|pi-child]
   evosubagent history --project <path> [--name <subagent>] [--limit N]
+  evosubagent show-run --project <path> --run-id <id> [--full]
+  evosubagent versions --project <path> --name <subagent>
+  evosubagent diff --project <path> --name <subagent> [--patch-id <id>]
   evosubagent correct --project <path> --name <subagent> --correction <text> --after-body <text> [--from-run <runId>]
   evosubagent evolve --project <path> --name <subagent> --correction <text> --after-body <text> [--from-run <runId>]
-  evosubagent revert --project <path> --name <subagent> --patch-id <id>
+  evosubagent revert --project <path> --name <subagent> (--to <version> | --patch-id <id>)
   evosubagent doctor --project <path> --name <subagent>
-  evosubagent demo correct-once --project <path>
-  evosubagent demo b1 --project <path>
+  evosubagent demo correct-once|b1 --project <path>
   evosubagent --help
 
-Notes:
-  history  lists .evosubagent/runs (newest first)
-  correct  same kernel as evolve, run-linked correction UX (prefer over evolve for product demos)
-  demo b1  product loop: invoke → history → correct(--from-run) → invoke (see docs/b1-protocol.md)
+Everyday:
+  history / show-run / versions / diff  — trust loop (what ran, what changed)
+  correct --from-run                    — preferred over evolve for product demos
+  revert --to <version>                 — user-facing rollback (still records patch ids)
+
+Note: --after-body still required for correct/evolve (proposal-from-NL is next).
+Runs under .evosubagent/runs are gitignored; do not paste secrets into PRs.
 `);
 }
 
@@ -131,9 +144,31 @@ async function cmdEvolve(args) {
 async function cmdRevert(args) {
   const projectRoot = resolve(String(args.project ?? '.'));
   const name = String(args.name ?? '');
-  const patchId = String(args['patch-id'] ?? args.patchId ?? '');
-  if (!name || !patchId) {
-    throw new Error('revert requires --name, --patch-id');
+  const toVersion =
+    args.to && args.to !== true
+      ? String(args.to)
+      : args['to-version'] && args['to-version'] !== true
+        ? String(args['to-version'])
+        : undefined;
+  const patchId =
+    args['patch-id'] && args['patch-id'] !== true
+      ? String(args['patch-id'])
+      : args.patchId && args.patchId !== true
+        ? String(args.patchId)
+        : undefined;
+  if (!name) throw new Error('revert requires --name');
+  if (toVersion) {
+    const result = await revertToVersion({
+      projectRoot,
+      subagentName: name,
+      toVersion,
+      actorRef: 'cli',
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (!patchId) {
+    throw new Error('revert requires --to <version> or --patch-id <id>');
   }
   const result = await revertEvolutionPatch({
     projectRoot,
@@ -153,6 +188,49 @@ async function cmdRevert(args) {
       null,
       2,
     ),
+  );
+}
+
+async function cmdList(args) {
+  const projectRoot = resolve(String(args.project ?? '.'));
+  console.log(JSON.stringify(await listSubagents({ projectRoot }), null, 2));
+}
+
+async function cmdShowRun(args) {
+  const projectRoot = resolve(String(args.project ?? '.'));
+  const runId = String(args['run-id'] ?? args.runId ?? '');
+  if (!runId) throw new Error('show-run requires --run-id');
+  console.log(
+    JSON.stringify(
+      await showRun({ projectRoot, runId, full: args.full === true }),
+      null,
+      2,
+    ),
+  );
+}
+
+async function cmdVersions(args) {
+  const projectRoot = resolve(String(args.project ?? '.'));
+  const name = String(args.name ?? '');
+  if (!name) throw new Error('versions requires --name');
+  const limit = args.limit && args.limit !== true ? Number(args.limit) : 20;
+  console.log(
+    JSON.stringify(await listVersionHistory({ projectRoot, name, limit }), null, 2),
+  );
+}
+
+async function cmdDiff(args) {
+  const projectRoot = resolve(String(args.project ?? '.'));
+  const name = String(args.name ?? '');
+  if (!name) throw new Error('diff requires --name');
+  const patchId =
+    args['patch-id'] && args['patch-id'] !== true
+      ? String(args['patch-id'])
+      : args.patchId && args.patchId !== true
+        ? String(args.patchId)
+        : undefined;
+  console.log(
+    JSON.stringify(await diffSubagent({ projectRoot, name, patchId }), null, 2),
   );
 }
 
@@ -221,8 +299,12 @@ async function main() {
   const [cmd, sub] = /** @type {string[]} */ (args._);
 
   try {
-    if (cmd === 'invoke') await cmdInvoke(args);
+    if (cmd === 'invoke' || cmd === 'run') await cmdInvoke(args);
+    else if (cmd === 'list') await cmdList(args);
     else if (cmd === 'history') await cmdHistory(args);
+    else if (cmd === 'show-run') await cmdShowRun(args);
+    else if (cmd === 'versions') await cmdVersions(args);
+    else if (cmd === 'diff') await cmdDiff(args);
     else if (cmd === 'correct') await cmdCorrect(args);
     else if (cmd === 'evolve') await cmdEvolve(args);
     else if (cmd === 'revert') await cmdRevert(args);
