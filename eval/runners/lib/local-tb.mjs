@@ -45,6 +45,42 @@ export function run(cmd, args, opts = {}) {
   });
 }
 
+/** @param {number} ms */
+export function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+const RATE_LIMIT_RE =
+  /Concurrency limit exceeded|rate.?limit|too many requests|please retry later|429/i;
+
+/**
+ * Detect gateway concurrency / rate-limit failure from Pi JSONL.
+ * @param {string} logsDir
+ */
+export async function detectRateLimit(logsDir) {
+  const piOut = join(logsDir, 'agent', 'pi-out.txt');
+  try {
+    const text = await readFile(piOut, 'utf8');
+    if (!RATE_LIMIT_RE.test(text)) return { rateLimited: false, reason: null };
+    let reason = 'rate-limit';
+    for (const line of text.split('\n')) {
+      try {
+        const e = JSON.parse(line);
+        const msg = e?.message?.errorMessage || e?.errorMessage;
+        if (typeof msg === 'string' && RATE_LIMIT_RE.test(msg)) {
+          reason = msg;
+          break;
+        }
+      } catch {
+        if (RATE_LIMIT_RE.test(line)) reason = line.slice(0, 160);
+      }
+    }
+    return { rateLimited: true, reason };
+  } catch {
+    return { rateLimited: false, reason: null };
+  }
+}
+
 export async function loadApiKey() {
   if (process.env.CPA_OAI_API_KEY) return process.env.CPA_OAI_API_KEY;
   if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
@@ -200,6 +236,8 @@ RUN echo 'export NVM_DIR="$HOME/.nvm"' >> /root/.bashrc \\
  *   provider?: string,
  *   model?: string,
  *   timeoutMs?: number,
+ *   maxRateLimitRetries?: number,
+ *   rateLimitBackoffMs?: number,
  * }} input
  */
 export async function runLocalArm(input) {
@@ -211,6 +249,12 @@ export async function runLocalArm(input) {
     process.env.EVOSUBAGENT_LOCAL_PROXY ||
     process.env.https_proxy ||
     'http://127.0.0.1:7897';
+  const maxRetries = Number(
+    input.maxRateLimitRetries ?? process.env.EVOSUBAGENT_RATE_LIMIT_RETRIES ?? 2,
+  );
+  const backoffMs = Number(
+    input.rateLimitBackoffMs ?? process.env.EVOSUBAGENT_RATE_LIMIT_BACKOFF_MS ?? 45_000,
+  );
   const started = Date.now();
 
   const work = await mkdtemp(join(tmpdir(), `tb-${input.taskId}-${input.arm}-`));
@@ -321,32 +365,63 @@ exit 0
 `;
   await writeFile(join(work, 'run.sh'), script);
 
-  const result = await run(
-    'docker',
-    [
-      'run',
-      '--rm',
-      '--network=host',
-      '-v',
-      `${work}:/work`,
-      '-v',
-      `${logs}:/logs`,
-      '-v',
-      `${join(work, 'tests')}:/tests`,
-      input.image,
-      'bash',
-      '/work/run.sh',
-    ],
-    { timeoutMs: (input.timeoutMs || 900_000) + 60_000 },
-  );
-
+  let result = { code: 1, stdout: '', stderr: '' };
   let reward = null;
-  try {
-    const raw = (await readFile(join(logs, 'verifier', 'reward.txt'), 'utf8')).trim();
-    reward = Number(raw);
-    if (Number.isNaN(reward)) reward = null;
-  } catch {
-    reward = null;
+  let rateLimited = false;
+  /** @type {string|null} */
+  let rateLimitReason = null;
+  let attempts = 0;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    attempts = attempt + 1;
+    if (attempt > 0) {
+      const wait = backoffMs * attempt;
+      process.stderr.write(
+        `rate-limit retry ${attempt}/${maxRetries} after ${wait}ms (${rateLimitReason ?? ''})\n`,
+      );
+      await sleep(wait);
+      // clear previous agent/verifier outputs before re-run
+      await writeFile(join(logs, 'agent', 'pi-out.txt'), '');
+      try {
+        await writeFile(join(logs, 'verifier', 'reward.txt'), '0\n');
+      } catch {
+        /* ignore */
+      }
+    }
+
+    result = await run(
+      'docker',
+      [
+        'run',
+        '--rm',
+        '--network=host',
+        '-v',
+        `${work}:/work`,
+        '-v',
+        `${logs}:/logs`,
+        '-v',
+        `${join(work, 'tests')}:/tests`,
+        input.image,
+        'bash',
+        '/work/run.sh',
+      ],
+      { timeoutMs: (input.timeoutMs || 900_000) + 60_000 },
+    );
+
+    try {
+      const raw = (await readFile(join(logs, 'verifier', 'reward.txt'), 'utf8')).trim();
+      reward = Number(raw);
+      if (Number.isNaN(reward)) reward = null;
+    } catch {
+      reward = null;
+    }
+
+    const rl = await detectRateLimit(logs);
+    rateLimited = rl.rateLimited;
+    rateLimitReason = rl.reason;
+    if (reward === 1) break;
+    if (!rl.rateLimited) break;
+    if (attempt >= maxRetries) break;
   }
 
   return {
@@ -361,10 +436,15 @@ exit 0
     image: input.image,
     logsDir: logs,
     workDir: work,
+    attempts,
+    rateLimited,
+    rateLimitReason,
     error:
       reward == null
         ? `no reward.txt (dockerExit=${result.code}) stderr=${result.stderr.slice(-200)}`
-        : null,
+        : rateLimited && reward !== 1
+          ? `rate-limited after ${attempts} attempt(s): ${rateLimitReason}`
+          : null,
   };
 }
 

@@ -1,6 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeDelta, loadSubsetConfig, DEFAULT_CONFIG } from '../eval/runners/lib/local-tb.mjs';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  summarizeDelta,
+  loadSubsetConfig,
+  detectRateLimit,
+  DEFAULT_CONFIG,
+} from '../eval/runners/lib/local-tb.mjs';
 
 describe('local-tb helpers', () => {
   it('summarizeDelta computes pass rates and ΔResolve', () => {
@@ -20,5 +28,30 @@ describe('local-tb helpers', () => {
     assert.equal(c.taskCount, 16);
     assert.equal(c.model.ref, 'cpa-oai/grok-4.5');
     assert.ok(c.taskListHash);
+  });
+
+  it('detectRateLimit finds concurrency errors in pi-out', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rl-'));
+    const logs = join(root, 'logs');
+    await mkdir(join(logs, 'agent'), { recursive: true });
+    await writeFile(
+      join(logs, 'agent', 'pi-out.txt'),
+      `${JSON.stringify({
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'error',
+          errorMessage: 'Concurrency limit exceeded for user, please retry later',
+        },
+      })}\n`,
+    );
+    const hit = await detectRateLimit(logs);
+    assert.equal(hit.rateLimited, true);
+    assert.match(hit.reason ?? '', /Concurrency limit exceeded/);
+
+    await writeFile(join(logs, 'agent', 'pi-out.txt'), '{"type":"agent_end"}\n');
+    const miss = await detectRateLimit(logs);
+    assert.equal(miss.rateLimited, false);
+    await rm(root, { recursive: true, force: true });
   });
 });
