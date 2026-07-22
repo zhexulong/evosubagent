@@ -17,7 +17,9 @@
     "eval:tb-dry": "node eval/runners/tb-subset.mjs --dry-run",
     "eval:tb": "node eval/runners/tb-subset.mjs --arm both",
     "eval:tb-summarize": "node eval/runners/summarize-tb.mjs",
-    "eval:fix-git-dual": "node eval/runners/fix-git-dual-arm.mjs"
+    "eval:fix-git-dual": "node eval/runners/tb-subset-local.mjs --task fix-git --arm both",
+    "eval:tb-local": "node eval/runners/tb-subset-local.mjs",
+    "eval:tb-local-dry": "node eval/runners/tb-subset-local.mjs --dry-run"
   },
   "engines": {
     "node": ">=20"
