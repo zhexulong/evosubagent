@@ -97,6 +97,38 @@ B0_cold must **not** only prepend prose about subagents. It:
 
 Proof artifacts under `/logs/agent/`: `materialize.json`, `materialized-prompt.txt`.
 
+
+## Local multi-task TB subset (recommended L2a path)
+
+Host-network docker runner: same frozen list as Harbor, real B0 materialize, ΔResolve summary.
+
+```bash
+# Plan (images present?)
+npm run eval:tb-local-dry
+
+# Single task both arms
+npm run eval:fix-git-dual
+# or:
+node eval/runners/tb-subset-local.mjs --task fix-git
+
+# First N tasks (skip missing images)
+node eval/runners/tb-subset-local.mjs --limit 3 --skip-missing-images
+
+# Pull missing images via host proxy (crane) then bake pi if needed
+node eval/runners/tb-subset-local.mjs --limit 2 --ensure-images --bake-pi
+
+# Full frozen 16 (all images local + pi baked)
+npm run eval:tb-local
+```
+
+Output: `eval/out/tb-local-*.json` with `summary.deltaResolve` and per-task A0/B0 rewards.
+
+Requirements:
+- dataset at `eval/cache/terminal-bench-2.0`
+- gateway `127.0.0.1:8317` (cpa-oai)
+- optional proxy `127.0.0.1:7897` for apt/uv inside containers (`--network=host`)
+- task images local (`docker images`) or `--ensure-images`
+
 ### Local fix-git dual-arm (when Harbor chown hangs)
 
 ```bash
